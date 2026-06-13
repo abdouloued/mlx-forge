@@ -1,0 +1,25 @@
+# Tool-calling reference recipe
+# Verify model IDs at https://huggingface.co/mlx-community before use
+
+# Base model — Apache 2.0, MLX-native 4-bit quantized
+base_model: mlx-community/Qwen2.5-7B-Instruct-4bit
+
+# Operating mode: "direct" (loop on this model) or "transfer" (loop on loop_model)
+mode: direct
+# loop_model: mlx-community/Phi-4-mini-instruct-4bit  # uncomment for transfer mode
+
+# LoRA hyperparameters
+lora_rank: 8
+lora_alpha: 16.0
+lora_layers: 16
+
+# Training budget — fixed per experiment so runs are comparable in the loop
+iters: 500
+learning_rate: 0.0001
+batch_size: 4
+grad_checkpoint: true
+
+# Paths (relative to repo root)
+data_dir: recipes/toolcalling/data
+adapter_path: adapters/toolcalling
+fused_path: fused/toolcalling
