@@ -1,0 +1,35 @@
+# Data-flywheel recipe
+# Bootstraps from the toolcalling recipe and grows training data using the model itself.
+#
+# Workflow:
+#   1. Start with a base fine-tuned adapter (from toolcalling recipe)
+#   2. Run the flywheel: model generates responses on seed prompts
+#   3. The toolcalling judge filters by quality threshold
+#   4. Good responses are appended to the toolcalling train.jsonl
+#   5. Retrain on the expanded dataset
+#   6. Repeat — each round the model gets better data to learn from
+
+base_model: mlx-community/Qwen2.5-7B-Instruct-4bit
+mode: direct
+
+lora_rank: 8
+lora_alpha: 16.0
+lora_layers: 16
+
+iters: 500
+learning_rate: 0.0001
+batch_size: 4
+grad_checkpoint: true
+
+# Paths — reuses toolcalling data so the flywheel augments that recipe's dataset
+data_dir: recipes/toolcalling/data
+adapter_path: adapters/flywheel
+fused_path: fused/flywheel
+
+# Flywheel settings (read by run_flywheel in flywheel.py)
+flywheel:
+  seeds_path: recipes/data_flywheel/seeds.jsonl
+  train_path: recipes/toolcalling/data/train.jsonl
+  n_rounds: 3
+  n_per_seed: 3
+  threshold: 0.75
