@@ -116,16 +116,44 @@ Score of `1.0` means the model called the right function with the right argument
 
 ## Recipes
 
-| Recipe | Task | Eval metric | Status |
+| Recipe | Task | Scorer | Status |
 |---|---|---|---|
-| `toolcalling` | JSON tool-call generation | 4-criterion score (0–1) | Phase 1 ✓ |
-| `edge-android` | Compact assistant for mobile | correctness + tok/s + size | Phase 3 |
-| `healthcare-coding` | Medical coding / documentation | accuracy + abstention rate | Phase 3 |
+| `toolcalling` | JSON tool-call generation | 4-criterion: called/valid/name/args (0–1) | Phase 1 ✓ |
+| `edge_android` | Compact assistant for mobile | correctness + conciseness (0–1) | Phase 3 ✓ |
+| `healthcare_coding` | ICD-10 coding + abstention | correct code or correct refusal (0–1) | Phase 3 ✓ |
+
+### Transfer mode (large ship models)
+
+When your target model is too large to sweep directly (27B+), use `mode: transfer`:
+
+```yaml
+# recipe.yaml
+base_model: mlx-community/Qwen2.5-32B-Instruct-4bit  # ship model
+mode: transfer
+loop_model: mlx-community/Phi-4-mini-instruct-4bit    # small sibling for the loop
+```
+
+**Step 1 — run the loop on the small sibling:**
+```bash
+uv run python -m core.loop \
+  --recipe recipes/toolcalling/recipe.yaml \
+  --n-experiments 20
+```
+
+**Step 2 — apply the best config to the ship model once:**
+```bash
+uv run python -m core.transfer \
+  --recipe recipes/toolcalling/recipe.yaml \
+  --state-path loop_state.json
+```
+
+`core.transfer` reads `loop_state.json`, replaces the training target with `base_model`,
+and runs one fine-tuning pass with the winning hyperparams.
 
 ### Add a new recipe
 
 ```bash
-cp -r recipes/toolcalling recipes/my-recipe
+cp -r recipes/toolcalling recipes/my_recipe
 ```
 
 Then:
@@ -168,7 +196,7 @@ The split between `core/` (generalises across every task) and `recipes/eval.py` 
 
 ```bash
 uv run pytest -v
-# → 55 passed in ~0.1s
+# → 81 passed in ~0.2s
 ```
 
 No Apple Silicon, no model download, no network access required.
