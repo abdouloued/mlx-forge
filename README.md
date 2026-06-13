@@ -168,10 +168,46 @@ The split between `core/` (generalises across every task) and `recipes/eval.py` 
 
 ```bash
 uv run pytest -v
-# → 42 passed in ~0.1s
+# → 55 passed in ~0.1s
 ```
 
 No Apple Silicon, no model download, no network access required.
+
+---
+
+## Auto-search loop (Phase 2)
+
+The overnight ratchet: propose a config change → train → score → keep if better (git commit) → repeat.
+
+```bash
+uv run python -m core.loop \
+  --recipe recipes/toolcalling/recipe.yaml \
+  --n-experiments 20 \
+  --target-score 0.90 \
+  --seed 42
+```
+
+Each experiment:
+1. Picks one hyperparameter to vary (learning rate, LoRA rank, layers, or batch size)
+2. Trains with the fixed `iters` budget from `recipe.yaml`
+3. Scores the resulting adapter on `data/valid.jsonl`
+4. If the score improves: updates `recipe.yaml` + `program.md`, commits to git
+5. If not: discards silently (next experiment overwrites the adapter dir)
+
+The loop stops when `--n-experiments` is exhausted or `--target-score` is reached. Git history is the experiment log — each kept run is one commit.
+
+**The loop never calls `push_hf` or `export_gguf`.** Publishing is always manual.
+
+### Steering the search
+
+Edit `recipes/toolcalling/program.md` to adjust notes and context. The search space is currently:
+
+| Param | Values tried |
+|---|---|
+| `learning_rate` | 5e-5, 1e-4, 2e-4, 5e-4 |
+| `lora_rank` | 4, 8, 16, 32 |
+| `lora_layers` | 8, 16, 24, 32 |
+| `batch_size` | 2, 4, 8 |
 
 ---
 
@@ -182,9 +218,3 @@ No Apple Silicon, no model download, no network access required.
 - LoRA/QLoRA for anything above the small tier — no full fine-tuning of large models
 - Publishing is always manual (user-triggered) — the loop never calls `push_hf` or `export_gguf`
 - Base model must be HuggingFace safetensors format — GGUF cannot be used as a fine-tuning starting point
-
----
-
-## Phase 2 (coming): auto-search loop
-
-`core/loop.py` will implement the overnight ratchet: read `program.md` → propose a config change → train → eval → keep if better (git commit) → repeat. Fixed-budget runs keep experiments comparable. The loop edits only the fine-tuning config — never `eval.py` or `core/`.
