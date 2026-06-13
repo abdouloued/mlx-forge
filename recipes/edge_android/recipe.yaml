@@ -1,0 +1,25 @@
+# Edge-Android recipe
+# Target: compact, fast model for mobile/on-device deployment
+# Verify model ID at https://huggingface.co/mlx-community before use
+
+# Small base model — fits easily on-device after quantization
+base_model: mlx-community/Phi-4-mini-instruct-4bit
+
+# Direct mode: this IS the ship model (small enough to loop directly)
+mode: direct
+
+# Lean LoRA config — fewer layers = smaller adapter = faster inference
+lora_rank: 4
+lora_alpha: 8.0
+lora_layers: 8
+
+# Training budget
+iters: 300
+learning_rate: 0.0001
+batch_size: 4
+grad_checkpoint: true
+
+# Paths
+data_dir: recipes/edge_android/data
+adapter_path: adapters/edge_android
+fused_path: fused/edge_android
