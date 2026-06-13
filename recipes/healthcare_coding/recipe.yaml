@@ -1,0 +1,25 @@
+# Healthcare-coding recipe
+# Task: ICD-10-CM code assignment + appropriate abstention on out-of-scope requests
+#
+# DATA NOTE: This recipe uses synthetic training examples only.
+# If you substitute real clinical data, ensure de-identification and verify
+# compliance with applicable regulations (HIPAA, etc.) before use.
+#
+# Verify model ID at https://huggingface.co/mlx-community before use
+
+base_model: mlx-community/Qwen2.5-7B-Instruct-4bit
+
+mode: direct
+
+lora_rank: 8
+lora_alpha: 16.0
+lora_layers: 16
+
+iters: 500
+learning_rate: 0.0001
+batch_size: 4
+grad_checkpoint: true
+
+data_dir: recipes/healthcare_coding/data
+adapter_path: adapters/healthcare_coding
+fused_path: fused/healthcare_coding
