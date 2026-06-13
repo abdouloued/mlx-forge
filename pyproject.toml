@@ -1,0 +1,30 @@
+[project]
+name = "mlx-forge"
+version = "0.1.0"
+description = "Mac-native fine-tuning factory: overnight fine-tune, eval, ship"
+requires-python = ">=3.11"
+dependencies = [
+    "mlx-lm>=0.30.0",
+    "huggingface_hub>=0.23.0",
+    "jsonschema>=4.22.0",
+    "rich>=13.7.0",
+    "pyyaml>=6.0.1",
+]
+
+[project.scripts]
+mlx-train  = "core.train:main"
+mlx-eval   = "recipes.toolcalling.eval:main"
+mlx-fuse   = "core.fuse:main"
+mlx-export = "core.export_gguf:main"
+mlx-push   = "core.push_hf:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["core", "shared", "recipes"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"
