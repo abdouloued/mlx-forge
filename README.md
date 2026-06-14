@@ -33,7 +33,7 @@ Most fine-tuning tools show you a loss curve and call it done. mlx-forge makes e
 
 ```bash
 # 1. Clone and install
-git clone https://github.com/your-org/mlx-forge
+git clone https://github.com/abdouloued/mlx-forge
 cd mlx-forge
 uv sync
 
@@ -168,27 +168,87 @@ The only file you *must* rewrite is `eval.py`. The `core/` machinery is unchange
 
 ## Architecture
 
+```mermaid
+flowchart TD
+    BASE["🤖 Base Model\nHF safetensors\n(mlx-community/*)"]
+
+    BASE --> RECIPE
+
+    subgraph RECIPE["Recipe  (one per task)"]
+        direction TB
+        YAML["recipe.yaml\nbase model · hyperparams · paths"]
+        DATA["data/train.jsonl  ·  data/valid.jsonl"]
+        SCORER["scorer.py  —  task-specific eval\nreturns a single score  0.0 → 1.0"]
+    end
+
+    RECIPE --> LOOP
+
+    subgraph LOOP["Auto-search Loop  —  core/loop.py"]
+        direction TB
+        TRAIN["core/train.py\nMLX LoRA fine-tune\n(fixed iters budget)"]
+        SCORE["Score adapter\nscorer.py → 0.0–1.0"]
+        KEEP["git commit\nupdate recipe.yaml + program.md"]
+        DISC["discard silently"]
+        DONE{"n experiments\nor target score?"}
+
+        TRAIN --> SCORE
+        SCORE -->|"score > best"| KEEP
+        SCORE -->|"score ≤ best"| DISC
+        KEEP --> DONE
+        DISC --> DONE
+        DONE -->|"continue"| TRAIN
+    end
+
+    DONE -->|"done"| FUSE
+
+    FLYWHEEL["Data Flywheel\nrecipes/data_flywheel\ngenerate → judge → append"]
+    FLYWHEEL -.->|"adds good\ngenerations"| DATA
+
+    TRANSFER["Transfer mode\ncore/transfer.py\napply best config\nto large ship model"]
+    LOOP -.->|"mode: transfer"| TRANSFER
+    TRANSFER --> FUSE
+
+    FUSE["core/fuse.py\nmerge adapter into full weights"]
+
+    FUSE --> HF["core/push_hf.py\nHugging Face Hub\n(manual — user triggered)"]
+    FUSE --> GGUF["core/export_gguf.py\nGGUF + Ollama Modelfile\n(manual — user triggered)"]
+
+    HF --> HFOUT["☁️ huggingface.co/your-model"]
+    GGUF --> PHONE["📱 Ollama · on-device · phone"]
+
+    style BASE fill:#1f2937,stroke:#374151,color:#e5e7eb
+    style FUSE fill:#1f2937,stroke:#374151,color:#e5e7eb
+    style FLYWHEEL fill:#1c2a1e,stroke:#2d4a30,color:#86efac
+    style TRANSFER fill:#1c1f2a,stroke:#2d3a5a,color:#93c5fd
+    style HF fill:#1f2937,stroke:#374151,color:#e5e7eb
+    style GGUF fill:#1f2937,stroke:#374151,color:#e5e7eb
+    style HFOUT fill:#1c2a1e,stroke:#2d4a30,color:#86efac
+    style PHONE fill:#1c2a1e,stroke:#2d4a30,color:#86efac
+```
+
+**Core design principle:** `core/` machinery generalises across every task. `recipes/scorer.py` does not — every domain needs its own. Adding a task means adding a recipe; the machinery is untouched.
+
+### File map
+
 ```
 mlx-forge/
   core/
-    config.py        # RecipeConfig dataclass + YAML loader
-    train.py         # wraps mlx_lm.lora
-    fuse.py          # wraps mlx_lm.fuse
-    export_gguf.py   # GGUF conversion + Ollama Modelfile
-    push_hf.py       # Hugging Face upload
+    config.py          # RecipeConfig dataclass + YAML loader + validation
+    train.py           # wraps mlx_lm.lora
+    fuse.py            # wraps mlx_lm.fuse
+    export_gguf.py     # GGUF conversion + Ollama Modelfile
+    push_hf.py         # Hugging Face upload
+    loop.py            # auto-search ratchet
+    transfer.py        # apply loop best config to large ship model
   recipes/
-    toolcalling/     # reference recipe
-      recipe.yaml    # base model, hyperparams, paths
-      data/          # train.jsonl (20 examples), valid.jsonl (8 examples)
-      eval.py        # task-specific scoring — the part that does NOT generalise
-      program.md     # instructions for the auto-search loop (Phase 2)
-  shared/
-    formats/
-      tool_schema.py # tool-call structure validator
-  tests/             # 42 unit tests, all mocked — no model needed
+    toolcalling/       # reference recipe — build this first
+    edge_android/      # compact on-device assistant
+    healthcare_coding/ # ICD-10 coding + abstention
+    data_flywheel/     # self-improving training data loop
+  shared/formats/
+    tool_schema.py     # tool-call structure validator
+  tests/               # 92 unit tests — no model, no network needed
 ```
-
-The split between `core/` (generalises across every task) and `recipes/eval.py` (does not) is the core design principle. The machinery runs; the eval scores; the loop (Phase 2) connects them.
 
 ---
 
@@ -196,7 +256,7 @@ The split between `core/` (generalises across every task) and `recipes/eval.py` 
 
 ```bash
 uv run pytest -v
-# → 81 passed in ~0.2s
+# → 92 passed in ~0.2s
 ```
 
 No Apple Silicon, no model download, no network access required.
