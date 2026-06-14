@@ -75,13 +75,8 @@ def cmd_train(args: list[str]) -> None:
     if overrides:
         cfg = dataclasses.replace(cfg, **overrides)
 
-    from core.train import run_training
-    console.print(f"  [dim]Model:[/]   {cfg.base_model}")
-    console.print(f"  [dim]Data:[/]    {cfg.data_dir}")
-    console.print(f"  [dim]Iters:[/]   {cfg.iters}   rank={cfg.lora_rank}   layers={cfg.lora_layers}")
-    console.print()
-    run_training(cfg)
-    console.print(f"\n  [green]✓ adapter saved to {cfg.adapter_path}[/]")
+    from core.tui import run_train_tui
+    run_train_tui(cfg)
 
 
 def cmd_eval(args: list[str]) -> None:
@@ -123,8 +118,8 @@ def cmd_loop(args: list[str]) -> None:
     p.add_argument("--seed", type=int, default=42)
     parsed = p.parse_args(args)
 
-    from core.loop import ratchet_loop
-    ratchet_loop(
+    from core.tui import run_loop_tui
+    run_loop_tui(
         recipe_path=parsed.recipe,
         n_experiments=parsed.n_experiments,
         target_score=parsed.target_score,
