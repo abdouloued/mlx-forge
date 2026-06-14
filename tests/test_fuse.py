@@ -19,6 +19,13 @@ def test_fuse_command_includes_model():
     assert "mlx-community/Qwen2.5-7B-Instruct-4bit" in " ".join(cmd)
 
 
+def test_fuse_command_uses_new_entrypoint():
+    cmd = build_fuse_command(make_cfg())
+    joined = " ".join(cmd)
+    assert "mlx_lm.fuse" not in joined
+    assert "mlx_lm" in joined and "fuse" in joined
+
+
 def test_fuse_command_includes_adapter_path():
     cmd = build_fuse_command(make_cfg(adapter_path="adapters/run1"))
     assert "adapters/run1" in " ".join(cmd)

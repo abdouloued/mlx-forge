@@ -9,9 +9,8 @@ console = Console()
 
 
 def build_fuse_command(cfg: RecipeConfig) -> List[str]:
-    """Build the mlx_lm.fuse subprocess command. Verify flags with `mlx_lm.fuse --help`."""
     return [
-        sys.executable, "-m", "mlx_lm.fuse",
+        sys.executable, "-m", "mlx_lm", "fuse",
         "--model", cfg.base_model,
         "--adapter-path", cfg.adapter_path,
         "--save-path", cfg.fused_path,

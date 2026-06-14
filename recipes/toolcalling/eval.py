@@ -66,7 +66,7 @@ def score_response(response: str, example: dict) -> float:
     return sum([called_tool, valid_json, correct_name, correct_args]) / 4.0
 
 
-def evaluate(model_path: str, data_path: str) -> float:
+def evaluate(model_path: str, data_path: str, adapter_path: Optional[str] = None) -> float:
     """
     Run the model on validation examples and return the mean score (0-1).
 
@@ -75,7 +75,7 @@ def evaluate(model_path: str, data_path: str) -> float:
     """
     from mlx_lm import load, generate  # type: ignore
 
-    model, tokenizer = load(model_path)
+    model, tokenizer = load(model_path, adapter_path=adapter_path)
     examples = [
         json.loads(line)
         for line in Path(data_path).read_text().splitlines()

@@ -70,14 +70,18 @@ def update_program_md(path: Path | str, score: float, experiment: int) -> None:
 
 
 def _git_commit(files: list[str], message: str) -> None:
-    subprocess.run(["git", "add"] + files, check=True)
-    subprocess.run(["git", "commit", "-m", message], check=True)
+    try:
+        subprocess.run(["git", "add"] + files, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", message], check=True, capture_output=True)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass  # not a git repo or git not installed — skip silently
 
 
-def _score_model(adapter_path: str, data_path: str) -> float:
-    """Run the tool-calling scorer. Deferred import so mlx is not required for unit tests."""
-    from recipes.toolcalling.eval import evaluate as run_evaluate  # noqa: F401
-    return run_evaluate(adapter_path, data_path)
+def _score_model(recipe_name: str, base_model: str, adapter_path: str, data_path: str) -> float:
+    """Run the recipe-specific scorer. Deferred import so mlx is not required for unit tests."""
+    import importlib
+    mod = importlib.import_module(f"recipes.{recipe_name}.eval")
+    return mod.evaluate(base_model, data_path, adapter_path=adapter_path)
 
 
 def ratchet_loop(
@@ -102,6 +106,7 @@ def ratchet_loop(
     state_path = Path(state_path)
     program_md = recipe_path.parent / "program.md"
     scoring_data = recipe_path.parent / "data" / "valid.jsonl"
+    recipe_name = recipe_path.parent.name
 
     rng = random.Random(seed)
     state = load_state(state_path)
@@ -131,7 +136,7 @@ def ratchet_loop(
 
         try:
             run_training(proposed)
-            score = _score_model(proposed.adapter_path, str(scoring_data))
+            score = _score_model(recipe_name, proposed.base_model, proposed.adapter_path, str(scoring_data))
         except Exception as exc:
             console.print(f"[red]Experiment {exp_num} failed:[/] {exc}")
             results.append((exp_num, 0.0, False))

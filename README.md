@@ -283,7 +283,7 @@ mlx-forge/
     data_flywheel/     # self-improving training data loop
   shared/formats/
     tool_schema.py     # tool-call structure validator
-  tests/               # 92 unit tests — no model, no network needed
+  tests/               # 120 unit tests — no model, no network needed
 ```
 
 ---
@@ -292,7 +292,7 @@ mlx-forge/
 
 ```bash
 uv run pytest -v
-# → 92 passed in ~0.2s
+# → 120 passed in ~0.2s
 ```
 
 No Apple Silicon, no model download, no network access required.

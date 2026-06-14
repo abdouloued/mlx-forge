@@ -345,11 +345,13 @@ class ForgeApp(App):
         Binding("escape",  "focus_sidebar", "Sidebar"),
         Binding("ctrl+g",  "run_action",    "Run"),
         Binding("f5",      "run_action",    "Run", show=False),
+        Binding("ctrl+x",  "cancel",        "Cancel"),
     ]
 
     def __init__(self) -> None:
         super().__init__()
         self._is_running = False
+        self._proc: Optional[subprocess.Popen] = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -450,10 +452,18 @@ class ForgeApp(App):
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, bufsize=1,
         )
+        self._proc = proc
         for raw in proc.stdout:
             self._out((prefix + raw).rstrip())
         proc.wait()
+        self._proc = None
         return proc.returncode
+
+    def action_cancel(self) -> None:
+        proc = self._proc
+        if proc and proc.poll() is None:
+            proc.terminate()
+            self.query_one(OutputPanel).write("[yellow]⚠ Cancelled.[/]")
 
     def _done(self) -> None:
         self.call_from_thread(self._set_running, False)
@@ -485,7 +495,7 @@ class ForgeApp(App):
         recipe = v.get("recipe", "")
         if not recipe:
             self._out("Recipe path is required.", "red")
-            return
+            self._done(); return
         try:
             from core.config import load_recipe
             import dataclasses
@@ -508,7 +518,7 @@ class ForgeApp(App):
         recipe = v.get("recipe", "")
         if not recipe:
             self._out("Recipe path is required.", "red")
-            return
+            self._done(); return
         try:
             import importlib
             from core.config import load_recipe
@@ -528,7 +538,7 @@ class ForgeApp(App):
         recipe = v.get("recipe", "")
         if not recipe:
             self._out("Recipe path is required.", "red")
-            return
+            self._done(); return
         try:
             from core.config import load_recipe
             from core.fuse import fuse_adapter
@@ -545,7 +555,7 @@ class ForgeApp(App):
         recipe = v.get("recipe", "")
         if not recipe:
             self._out("Recipe path is required.", "red")
-            return
+            self._done(); return
         try:
             n      = int(v.get("n_experiments") or 10)
             target = float(v.get("target_score") or 0.90)
@@ -562,7 +572,7 @@ class ForgeApp(App):
         recipe = v.get("recipe", "")
         if not recipe or not v.get("llama_cpp") or not v.get("output"):
             self._out("Recipe, llama.cpp dir, and output path are all required.", "red")
-            return
+            self._done(); return
         try:
             from core.config import load_recipe
             from core.export_gguf import export_gguf
@@ -586,7 +596,7 @@ class ForgeApp(App):
         repo   = v.get("repo_id", "")
         if not recipe or not repo:
             self._out("Recipe and repo ID are both required.", "red")
-            return
+            self._done(); return
         try:
             from core.config import load_recipe
             from core.push_hf import push_to_hf
@@ -603,7 +613,7 @@ class ForgeApp(App):
         path = v.get("file", "")
         if not path:
             self._out("File path is required.", "red")
-            return
+            self._done(); return
         try:
             from core.datakit import validate_jsonl
             self._out(f"Validating [cyan]{path}[/] …")
@@ -625,7 +635,7 @@ class ForgeApp(App):
         system = v.get("system") or None
         if not inp or not out:
             self._out("Input and output paths are required.", "red")
-            return
+            self._done(); return
         try:
             from core.datakit import convert_qa_pairs, convert_csv, convert_instruction_pairs, save_jsonl
             import json
