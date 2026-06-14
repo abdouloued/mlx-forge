@@ -190,10 +190,13 @@ class Sidebar(Widget):
 
     def compose(self) -> ComposeResult:
         yield Label("ACTIONS", classes="sidebar-header")
-        lv = ListView(id="action-list")
-        for action in ACTIONS:
-            lv.append(ListItem(Label(f"{action.icon}  {action.label}"), id=f"action-{action.name}"))
-        yield lv
+        yield ListView(
+            *[
+                ListItem(Label(f"{action.icon}  {action.label}"), id=f"action-{action.name}")
+                for action in ACTIONS
+            ],
+            id="action-list",
+        )
 
 
 class FormPanel(Widget):
