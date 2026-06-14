@@ -1,15 +1,14 @@
-"""Textual TUI for mlx-forge — live training dashboard."""
+"""mlx-forge interactive TUI — navigate with arrows, fill fields, press Enter to run."""
 from __future__ import annotations
 
-import dataclasses
 import re
 import subprocess
 import sys
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
+from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, ScrollableContainer
@@ -17,401 +16,593 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import (
-    DataTable, Footer, Header, Label, ProgressBar, RichLog, Static, Rule
+    Button, Footer, Header, Input, Label,
+    ListItem, ListView, ProgressBar, RichLog, Static, Rule,
 )
-from textual import work
 
-from core.config import RecipeConfig, load_recipe
-from core.train import build_train_command
-
-# ── Regex for parsing mlx_lm.lora output ──────────────────────────────────────
 _ITER_RE = re.compile(r"Iter\s+(\d+):\s+Train loss\s+([\d.]+)")
 
 
-# ── Messages (worker → app) ────────────────────────────────────────────────────
+# ── Action definitions ─────────────────────────────────────────────────────────
 
-class ExperimentStarted(Message):
-    def __init__(self, n: int, total: int, config: dict[str, Any]) -> None:
-        super().__init__()
-        self.n = n
-        self.total = total
-        self.config = config
-
-
-class IterUpdate(Message):
-    def __init__(self, iter_n: int, total: int, loss: float) -> None:
-        super().__init__()
-        self.iter_n = iter_n
-        self.total = total
-        self.loss = loss
+@dataclass
+class Field:
+    id: str
+    label: str
+    placeholder: str = ""
+    default: str = ""
+    password: bool = False
 
 
-class LogLine(Message):
-    def __init__(self, text: str) -> None:
-        super().__init__()
-        self.text = text
+@dataclass
+class Action:
+    name: str
+    label: str
+    icon: str
+    description: str
+    fields: list[Field] = field(default_factory=list)
 
 
-class ExperimentDone(Message):
-    def __init__(self, n: int, score: float, kept: bool,
-                 config: dict[str, Any], best_score: float) -> None:
-        super().__init__()
-        self.n = n
-        self.score = score
-        self.kept = kept
-        self.config = config
-        self.best_score = best_score
+ACTIONS: list[Action] = [
+    Action(
+        name="download",
+        label="Download Model",
+        icon="⬇",
+        description="Pull a model from Hugging Face and cache it locally.",
+        fields=[
+            Field("model_id", "Model ID",
+                  placeholder="mlx-community/Qwen2.5-7B-Instruct-4bit",
+                  default="mlx-community/Qwen2.5-7B-Instruct-4bit"),
+        ],
+    ),
+    Action(
+        name="train",
+        label="Train",
+        icon="⚡",
+        description="Fine-tune with LoRA. Progress streams live below.",
+        fields=[
+            Field("recipe",  "Recipe path",
+                  placeholder="recipes/toolcalling/recipe.yaml",
+                  default="recipes/toolcalling/recipe.yaml"),
+            Field("iters",   "Iters override", placeholder="leave blank to use recipe value"),
+            Field("rank",    "LoRA rank override", placeholder="leave blank to use recipe value"),
+        ],
+    ),
+    Action(
+        name="eval",
+        label="Evaluate",
+        icon="📊",
+        description="Score the trained adapter on the validation set.",
+        fields=[
+            Field("recipe", "Recipe path",
+                  placeholder="recipes/toolcalling/recipe.yaml",
+                  default="recipes/toolcalling/recipe.yaml"),
+        ],
+    ),
+    Action(
+        name="fuse",
+        label="Fuse Adapter",
+        icon="🔗",
+        description="Merge the LoRA adapter into full model weights.",
+        fields=[
+            Field("recipe", "Recipe path",
+                  placeholder="recipes/toolcalling/recipe.yaml",
+                  default="recipes/toolcalling/recipe.yaml"),
+        ],
+    ),
+    Action(
+        name="loop",
+        label="Auto-search Loop",
+        icon="🔄",
+        description="Overnight ratchet — propose → train → score → keep if better.",
+        fields=[
+            Field("recipe",       "Recipe path",
+                  placeholder="recipes/toolcalling/recipe.yaml",
+                  default="recipes/toolcalling/recipe.yaml"),
+            Field("n_experiments","Experiments", placeholder="10", default="10"),
+            Field("target_score", "Target score", placeholder="0.90", default="0.90"),
+        ],
+    ),
+    Action(
+        name="export",
+        label="Export GGUF",
+        icon="📦",
+        description="Convert fused weights to GGUF + generate Ollama Modelfile.",
+        fields=[
+            Field("recipe",    "Recipe path",
+                  placeholder="recipes/toolcalling/recipe.yaml",
+                  default="recipes/toolcalling/recipe.yaml"),
+            Field("llama_cpp", "llama.cpp dir", placeholder="~/llama.cpp"),
+            Field("output",    "Output GGUF path",
+                  placeholder="exports/toolcalling/model-q4_k_m.gguf"),
+            Field("quant",     "Quantization", placeholder="Q4_K_M", default="Q4_K_M"),
+        ],
+    ),
+    Action(
+        name="push",
+        label="Push to HF Hub",
+        icon="☁",
+        description="Upload fused model to Hugging Face Hub (manual — you decide when).",
+        fields=[
+            Field("recipe",  "Recipe path",
+                  placeholder="recipes/toolcalling/recipe.yaml",
+                  default="recipes/toolcalling/recipe.yaml"),
+            Field("repo_id", "Repo ID", placeholder="your-username/model-name"),
+        ],
+    ),
+    Action(
+        name="data_validate",
+        label="Validate Data",
+        icon="✅",
+        description="Check every line of a JSONL file for format errors.",
+        fields=[
+            Field("file", "JSONL file path", placeholder="recipes/toolcalling/data/train.jsonl"),
+        ],
+    ),
+    Action(
+        name="data_convert",
+        label="Convert Data",
+        icon="↔",
+        description="Convert Q&A pairs, CSV, or Alpaca format to chat JSONL.",
+        fields=[
+            Field("fmt",    "Format", placeholder="qa  |  csv  |  instruction", default="qa"),
+            Field("input",  "Input file",  placeholder="my_data.csv"),
+            Field("output", "Output file", placeholder="train.jsonl"),
+            Field("system", "System prompt (optional)",
+                  placeholder="You are a helpful assistant."),
+        ],
+    ),
+]
 
-
-class RunDone(Message):
-    def __init__(self, best_score: float, best_config: dict[str, Any]) -> None:
-        super().__init__()
-        self.best_score = best_score
-        self.best_config = best_config
+ACTION_MAP = {a.name: a for a in ACTIONS}
 
 
 # ── Widgets ────────────────────────────────────────────────────────────────────
 
-class StatusBar(Static):
-    """Top status line showing recipe + hardware."""
-
+class Sidebar(Widget):
     DEFAULT_CSS = """
-    StatusBar {
+    Sidebar {
+        width: 26;
+        border-right: solid $surface;
         background: $panel;
-        color: $text-muted;
+        padding: 1 0;
+    }
+    Sidebar ListView {
+        background: $panel;
+        border: none;
+        height: 1fr;
+        padding: 0;
+    }
+    Sidebar ListItem {
         padding: 0 2;
-        height: 1;
+        color: $text-muted;
+    }
+    Sidebar ListItem.--highlight {
+        background: $primary 20%;
+        color: $text;
+    }
+    Sidebar Label.sidebar-header {
+        color: $text-muted;
+        padding: 0 2 1 2;
+        text-style: bold;
     }
     """
-
-    def update_status(self, recipe: str, model: str) -> None:
-        import platform
-        chip = "Apple Silicon"
-        try:
-            import subprocess as sp
-            out = sp.check_output(
-                ["system_profiler", "SPHardwareDataType"], text=True, stderr=sp.DEVNULL
-            )
-            for line in out.splitlines():
-                if "Chip:" in line:
-                    chip = line.split(":", 1)[1].strip()
-                    break
-        except Exception:
-            pass
-        self.update(f"recipe: [cyan]{recipe}[/]  model: [white]{Path(model).name}[/]  {chip}")
-
-
-class CurrentRun(Widget):
-    """Right panel — live progress for the active experiment."""
-
-    DEFAULT_CSS = """
-    CurrentRun {
-        border: round $primary;
-        padding: 1 2;
-        height: 100%;
-    }
-    CurrentRun Label { margin-bottom: 1; }
-    CurrentRun ProgressBar { margin-bottom: 1; }
-    """
-
-    iter_n: reactive[int] = reactive(0)
-    total: reactive[int] = reactive(500)
-    loss: reactive[float] = reactive(0.0)
-    first_loss: reactive[float] = reactive(0.0)
 
     def compose(self) -> ComposeResult:
-        yield Label("", id="exp-title")
-        yield Label("", id="exp-config")
-        yield Label("", id="exp-iter")
-        yield ProgressBar(total=100, show_eta=False, id="train-progress")
-        yield Label("", id="exp-loss")
-        yield Rule()
-        yield RichLog(highlight=False, markup=True, id="train-log", max_lines=200)
+        yield Label("ACTIONS", classes="sidebar-header")
+        lv = ListView(id="action-list")
+        for action in ACTIONS:
+            lv.append(ListItem(Label(f"{action.icon}  {action.label}"), id=f"action-{action.name}"))
+        yield lv
 
-    def start_experiment(self, n: int, total_exps: int, config: dict, total_iters: int) -> None:
-        self.total = total_iters
-        self.iter_n = 0
-        self.first_loss = 0.0
-        self.loss = 0.0
-        cfg_str = "  ".join(f"{k}={v}" for k, v in config.items()
-                            if k in ("learning_rate", "lora_rank", "lora_layers", "batch_size"))
-        self.query_one("#exp-title", Label).update(
-            f"[bold white]Experiment {n} / {total_exps}[/]"
-        )
-        self.query_one("#exp-config", Label).update(f"[dim]{cfg_str}[/]")
-        self.query_one("#exp-iter",   Label).update("")
-        self.query_one("#exp-loss",   Label).update("")
-        pb = self.query_one("#train-progress", ProgressBar)
-        pb.total = total_iters
-        pb.progress = 0
 
-    def on_iter_update(self, msg: IterUpdate) -> None:
-        if self.first_loss == 0.0 and msg.loss > 0:
-            self.first_loss = msg.loss
-        self.iter_n = msg.iter_n
-        self.loss = msg.loss
-        pb = self.query_one("#train-progress", ProgressBar)
-        pb.total = msg.total
-        pb.progress = msg.iter_n
-        self.query_one("#exp-iter", Label).update(
-            f"[dim]iter[/] [white]{msg.iter_n}[/] [dim]/ {msg.total}[/]"
-        )
-        if self.first_loss > 0:
-            delta = self.first_loss - msg.loss
-            arrow = "[green]↓[/]" if delta > 0 else "[red]↑[/]"
-            self.query_one("#exp-loss", Label).update(
-                f"loss  [dim]{self.first_loss:.3f}[/] → [bold white]{msg.loss:.3f}[/]  {arrow} {abs(delta):.3f}"
+class FormPanel(Widget):
+    DEFAULT_CSS = """
+    FormPanel {
+        width: 1fr;
+        border: none;
+        padding: 1 3;
+        height: auto;
+        max-height: 18;
+    }
+    FormPanel Label.form-title {
+        text-style: bold;
+        color: $text;
+        margin-bottom: 0;
+    }
+    FormPanel Label.form-desc {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+    FormPanel Label.field-label {
+        color: $text-muted;
+        margin-top: 1;
+    }
+    FormPanel Input {
+        margin-bottom: 0;
+    }
+    FormPanel Button {
+        margin-top: 1;
+        width: 14;
+    }
+    """
+
+    current_action: reactive[str] = reactive("download")
+
+    def compose(self) -> ComposeResult:
+        yield Label("", id="form-title",   classes="form-title")
+        yield Label("", id="form-desc",    classes="form-desc")
+        yield Static(id="form-fields")
+        yield Button("▶  Run", id="run-btn", variant="primary")
+
+    def show_action(self, action: Action) -> None:
+        self.current_action = action.name
+        self.query_one("#form-title", Label).update(f"{action.icon}  {action.label}")
+        self.query_one("#form-desc",  Label).update(action.description)
+
+        container = self.query_one("#form-fields", Static)
+        container.remove_children()
+        for f in action.fields:
+            container.mount(Label(f.label, classes="field-label"))
+            container.mount(
+                Input(
+                    value=f.default,
+                    placeholder=f.placeholder,
+                    password=f.password,
+                    id=f"field-{f.id}",
+                )
             )
 
-    def append_log(self, text: str) -> None:
-        log = self.query_one("#train-log", RichLog)
-        log.write(f"[dim]{text}[/]")
+    def get_values(self) -> dict[str, str]:
+        action = ACTION_MAP[self.current_action]
+        result: dict[str, str] = {}
+        for f in action.fields:
+            try:
+                widget = self.query_one(f"#field-{f.id}", Input)
+                result[f.id] = widget.value.strip()
+            except Exception:
+                result[f.id] = f.default
+        return result
 
 
-class ExperimentTable(Widget):
-    """Left panel — history of all experiments."""
-
+class OutputPanel(Widget):
     DEFAULT_CSS = """
-    ExperimentTable {
-        border: round $surface;
-        height: 100%;
+    OutputPanel {
+        height: 1fr;
+        border-top: solid $surface;
         padding: 0 1;
     }
-    ExperimentTable DataTable { height: 1fr; }
+    OutputPanel Label.out-header {
+        color: $text-muted;
+        padding: 0 1;
+    }
+    OutputPanel RichLog {
+        height: 1fr;
+    }
     """
 
     def compose(self) -> ComposeResult:
-        yield Label("[bold cyan]Experiments[/]", id="table-title")
-        dt = DataTable(zebra_stripes=True, show_cursor=False)
-        dt.add_columns("#", "score", "Δ", "config")
-        yield dt
+        yield Label("OUTPUT", classes="out-header")
+        yield RichLog(highlight=False, markup=True, id="output-log", max_lines=500)
 
-    def add_result(self, n: int, score: float, kept: bool,
-                   config: dict[str, Any], best_score: float) -> None:
-        dt = self.query_one(DataTable)
-        delta = score - (best_score if kept else best_score)
-        if kept:
-            icon  = "[green]✓[/]"
-            sc    = f"[bold green]{score:.4f}[/]"
-            d_str = f"[green]+{abs(score - (best_score - score if not kept else 0)):.4f}[/]"
-        else:
-            icon  = "[dim red]✗[/]"
-            sc    = f"[dim]{score:.4f}[/]"
-            d_str = f"[dim red]{score - best_score:+.4f}[/]"
+    def write(self, text: str) -> None:
+        self.query_one("#output-log", RichLog).write(text)
 
-        lr    = config.get("learning_rate", "")
-        rank  = config.get("lora_rank", "")
-        cfg_s = f"lr={lr:.0e} r={rank}"
-        dt.add_row(f"{icon} {n}", sc, d_str, cfg_s)
+    def clear(self) -> None:
+        self.query_one("#output-log", RichLog).clear()
 
-    def add_running(self, n: int, config: dict[str, Any]) -> None:
-        dt = self.query_one(DataTable)
-        dt.add_row(f"[cyan]↻[/] {n}", "[cyan]running[/]", "", "")
+
+# ── Messages ───────────────────────────────────────────────────────────────────
+
+class OutputLine(Message):
+    def __init__(self, text: str, style: str = "") -> None:
+        super().__init__()
+        self.text = text
+        self.style = style
 
 
 # ── Main App ───────────────────────────────────────────────────────────────────
 
 class ForgeApp(App):
-    """mlx-forge training dashboard."""
+    TITLE = "mlx-forge"
+    SUB_TITLE = "Mac-native fine-tuning factory"
 
     CSS = """
-    Screen {
-        layout: vertical;
-    }
+    Screen { layout: vertical; }
 
     #body {
         layout: horizontal;
         height: 1fr;
     }
 
-    ExperimentTable {
-        width: 36;
-        min-width: 30;
-    }
-
-    CurrentRun {
+    #right {
+        layout: vertical;
         width: 1fr;
-    }
-
-    #best-bar {
-        background: $panel;
-        color: $text-muted;
-        padding: 0 2;
-        height: 1;
     }
     """
 
     BINDINGS = [
-        Binding("ctrl+q", "quit", "Quit"),
-        Binding("ctrl+l", "clear_log", "Clear log"),
+        Binding("ctrl+q",     "quit",        "Quit"),
+        Binding("ctrl+l",     "clear_output","Clear output"),
+        Binding("escape",     "focus_sidebar","Sidebar"),
+        Binding("ctrl+r",     "run_action",  "Run"),
     ]
-
-    def __init__(self, recipe_path: str, n_experiments: int = 10,
-                 target_score: float = 0.90, seed: int = 42) -> None:
-        super().__init__()
-        self.recipe_path   = recipe_path
-        self.n_experiments = n_experiments
-        self.target_score  = target_score
-        self.seed          = seed
-        self._best_score   = 0.0
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        yield StatusBar(id="status-bar")
         with Horizontal(id="body"):
-            yield ExperimentTable()
-            yield CurrentRun()
-        yield Static("best score: —", id="best-bar")
+            yield Sidebar()
+            with Vertical(id="right"):
+                yield FormPanel()
+                yield OutputPanel()
         yield Footer()
 
     def on_mount(self) -> None:
-        cfg = load_recipe(self.recipe_path)
-        self.query_one(StatusBar).update_status(
-            Path(self.recipe_path).parent.name, cfg.base_model
+        # Select first action by default
+        self.query_one("#action-list", ListView).index = 0
+        self.query_one(FormPanel).show_action(ACTIONS[0])
+        self.query_one("#action-list", ListView).focus()
+
+    @on(ListView.Selected, "#action-list")
+    def on_action_selected(self, event: ListView.Selected) -> None:
+        item_id = event.item.id or ""
+        if item_id.startswith("action-"):
+            name = item_id[len("action-"):]
+            if name in ACTION_MAP:
+                self.query_one(FormPanel).show_action(ACTION_MAP[name])
+
+    @on(Button.Pressed, "#run-btn")
+    def on_run_pressed(self) -> None:
+        self.action_run_action()
+
+    def action_run_action(self) -> None:
+        panel = self.query_one(FormPanel)
+        name   = panel.current_action
+        values = panel.get_values()
+        out    = self.query_one(OutputPanel)
+        out.clear()
+        self._dispatch(name, values)
+
+    def action_focus_sidebar(self) -> None:
+        self.query_one("#action-list", ListView).focus()
+
+    def action_clear_output(self) -> None:
+        self.query_one(OutputPanel).clear()
+
+    @on(OutputLine)
+    def on_output_line(self, msg: OutputLine) -> None:
+        text = f"[{msg.style}]{msg.text}[/]" if msg.style else msg.text
+        self.query_one(OutputPanel).write(text)
+
+    def _out(self, text: str, style: str = "") -> None:
+        self.call_from_thread(self.post_message, OutputLine(text, style))
+
+    def _dispatch(self, name: str, values: dict[str, str]) -> None:
+        handlers = {
+            "download":     self._run_download,
+            "train":        self._run_train,
+            "eval":         self._run_eval,
+            "fuse":         self._run_fuse,
+            "loop":         self._run_loop,
+            "export":       self._run_export,
+            "push":         self._run_push,
+            "data_validate":self._run_data_validate,
+            "data_convert": self._run_data_convert,
+        }
+        handler = handlers.get(name)
+        if handler:
+            handler(values)
+
+    # ── Workers ────────────────────────────────────────────────────────────────
+
+    def _stream(self, cmd: list[str], prefix: str = "") -> int:
+        """Run a subprocess and stream stdout to the output panel."""
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1,
         )
-        self.title = "mlx-forge"
-        self.sub_title = Path(self.recipe_path).parent.name
-        self._run_loop()
+        for raw in proc.stdout:
+            self._out((prefix + raw).rstrip())
+        proc.wait()
+        return proc.returncode
 
     @work(thread=True)
-    def _run_loop(self) -> None:
-        import random, dataclasses, json
-        from core.loop import SEARCH_SPACE, propose_config, load_state, save_state, _git_commit
-        from core.config import load_recipe
-
-        rng   = random.Random(self.seed)
-        cfg   = load_recipe(self.recipe_path)
-        state = load_state("loop_state.json")
-        best  = state.best_score
-
-        for i in range(1, self.n_experiments + 1):
-            candidate = propose_config(cfg, SEARCH_SPACE, rng)
-            exp_cfg   = dataclasses.replace(
-                candidate,
-                adapter_path=f"{candidate.adapter_path}_exp{i:03d}",
+    def _run_download(self, v: dict) -> None:
+        model_id = v.get("model_id", "").strip()
+        if not model_id:
+            self._out("Model ID is required.", "red")
+            return
+        self._out(f"Downloading [cyan]{model_id}[/] …")
+        try:
+            from huggingface_hub import snapshot_download
+            local = snapshot_download(
+                repo_id=model_id,
+                ignore_patterns=["*.msgpack", "flax_model*", "tf_model*"],
             )
-            exp_dict = {
-                k: getattr(exp_cfg, k)
-                for k in ("learning_rate", "lora_rank", "lora_layers", "batch_size")
-            }
+            self._out(f"Loading model to verify …")
+            from mlx_lm import load
+            load(model_id)
+            self._out(f"[green]✓ {model_id}[/]")
+            self._out(f"  path: {local}", "dim")
+        except Exception as exc:
+            self._out(f"[red]Error:[/] {exc}")
 
-            self.call_from_thread(
-                self.post_message, ExperimentStarted(i, self.n_experiments, exp_dict)
+    @work(thread=True)
+    def _run_train(self, v: dict) -> None:
+        recipe = v.get("recipe", "")
+        if not recipe:
+            self._out("Recipe path is required.", "red")
+            return
+        try:
+            from core.config import load_recipe
+            import dataclasses
+            cfg = load_recipe(recipe)
+            if v.get("iters"):  cfg = dataclasses.replace(cfg, iters=int(v["iters"]))
+            if v.get("rank"):   cfg = dataclasses.replace(cfg, lora_rank=int(v["rank"]))
+            from core.train import build_train_command
+            self._out(f"Training [cyan]{Path(cfg.base_model).name}[/] for {cfg.iters} iters …")
+            rc = self._stream(build_train_command(cfg))
+            if rc == 0:
+                self._out(f"[green]✓ adapter saved to {cfg.adapter_path}[/]")
+            else:
+                self._out(f"[red]Training failed (exit {rc})[/]")
+        except Exception as exc:
+            self._out(f"[red]Error:[/] {exc}")
+
+    @work(thread=True)
+    def _run_eval(self, v: dict) -> None:
+        recipe = v.get("recipe", "")
+        if not recipe:
+            self._out("Recipe path is required.", "red")
+            return
+        try:
+            import importlib
+            from core.config import load_recipe
+            cfg  = load_recipe(recipe)
+            name = Path(recipe).parent.name
+            self._out(f"Evaluating [cyan]{name}[/] …")
+            mod   = importlib.import_module(f"recipes.{name}.eval")
+            score = mod.evaluate(cfg.base_model, cfg.data_dir, adapter_path=cfg.adapter_path)
+            color = "green" if score >= 0.85 else "yellow" if score >= 0.70 else "red"
+            self._out(f"score = [{color}]{score:.4f}[/]")
+        except Exception as exc:
+            self._out(f"[red]Error:[/] {exc}")
+
+    @work(thread=True)
+    def _run_fuse(self, v: dict) -> None:
+        recipe = v.get("recipe", "")
+        if not recipe:
+            self._out("Recipe path is required.", "red")
+            return
+        try:
+            from core.config import load_recipe
+            from core.fuse import fuse_adapter
+            cfg = load_recipe(recipe)
+            self._out(f"Fusing adapter into [cyan]{Path(cfg.base_model).name}[/] …")
+            fuse_adapter(cfg)
+            self._out(f"[green]✓ fused weights saved to {cfg.fused_path}[/]")
+        except Exception as exc:
+            self._out(f"[red]Error:[/] {exc}")
+
+    @work(thread=True)
+    def _run_loop(self, v: dict) -> None:
+        recipe = v.get("recipe", "")
+        if not recipe:
+            self._out("Recipe path is required.", "red")
+            return
+        try:
+            n      = int(v.get("n_experiments") or 10)
+            target = float(v.get("target_score") or 0.90)
+            from core.loop import ratchet_loop
+            self._out(f"Starting ratchet loop: {n} experiments, target={target} …")
+            ratchet_loop(recipe, n_experiments=n, target_score=target)
+            self._out("[green]✓ Loop complete.[/]")
+        except Exception as exc:
+            self._out(f"[red]Error:[/] {exc}")
+
+    @work(thread=True)
+    def _run_export(self, v: dict) -> None:
+        recipe = v.get("recipe", "")
+        if not recipe or not v.get("llama_cpp") or not v.get("output"):
+            self._out("Recipe, llama.cpp dir, and output path are all required.", "red")
+            return
+        try:
+            from core.config import load_recipe
+            from core.export_gguf import export_gguf
+            cfg = load_recipe(recipe)
+            self._out(f"Exporting to GGUF ({v.get('quant', 'Q4_K_M')}) …")
+            export_gguf(
+                fused_path=cfg.fused_path,
+                output_gguf=v["output"],
+                llama_cpp_dir=v["llama_cpp"],
+                quantization=v.get("quant", "Q4_K_M"),
+                system_prompt=None,
             )
-            self.call_from_thread(
-                self.query_one(ExperimentTable).add_running, i, exp_dict
-            )
+            self._out(f"[green]✓ {v['output']}[/]")
+        except Exception as exc:
+            self._out(f"[red]Error:[/] {exc}")
 
-            # ── Run training subprocess with streaming ──
-            cmd  = build_train_command(exp_cfg)
-            proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1,
-            )
-            for raw in proc.stdout:
-                line = raw.rstrip()
-                self.call_from_thread(self.post_message, LogLine(line))
-                m = _ITER_RE.search(line)
-                if m:
-                    self.call_from_thread(
-                        self.post_message,
-                        IterUpdate(int(m.group(1)), exp_cfg.iters, float(m.group(2))),
-                    )
-            proc.wait()
+    @work(thread=True)
+    def _run_push(self, v: dict) -> None:
+        recipe = v.get("recipe", "")
+        repo   = v.get("repo_id", "")
+        if not recipe or not repo:
+            self._out("Recipe and repo ID are both required.", "red")
+            return
+        try:
+            from core.config import load_recipe
+            from core.push_hf import push_to_hf
+            cfg = load_recipe(recipe)
+            self._out(f"Pushing to [cyan]huggingface.co/{repo}[/] …")
+            push_to_hf(cfg.fused_path, repo, cfg.base_model, recipe, private=True)
+            self._out(f"[green]✓ huggingface.co/{repo}[/]")
+        except Exception as exc:
+            self._out(f"[red]Error:[/] {exc}")
 
-            if proc.returncode != 0:
-                self.call_from_thread(self.post_message, LogLine("[red]training failed[/]"))
-                continue
+    @work(thread=True)
+    def _run_data_validate(self, v: dict) -> None:
+        path = v.get("file", "")
+        if not path:
+            self._out("File path is required.", "red")
+            return
+        try:
+            from core.datakit import validate_jsonl
+            self._out(f"Validating [cyan]{path}[/] …")
+            report = validate_jsonl(path)
+            self._out(report.summary())
+            if report.is_clean:
+                self._out("[green]✓ All lines valid.[/]")
+            else:
+                self._out(f"[red]{report.error_count} error(s) found.[/]")
+        except Exception as exc:
+            self._out(f"[red]Error:[/] {exc}")
 
-            # ── Score ──
-            try:
-                import importlib
-                recipe_name = Path(self.recipe_path).parent.name
-                mod   = importlib.import_module(f"recipes.{recipe_name}.eval")
-                score = mod.evaluate(
-                    exp_cfg.base_model,
-                    exp_cfg.data_dir,
-                    adapter_path=exp_cfg.adapter_path,
-                )
-            except Exception as exc:
-                self.call_from_thread(self.post_message, LogLine(f"[red]eval error: {exc}[/]"))
-                score = 0.0
-
-            kept = score > best
-            if kept:
-                best = score
-                state.best_score  = best
-                state.experiment  = i
-                state.best_config = exp_dict
-                save_state(state, "loop_state.json")
-                _git_commit(
-                    ["loop_state.json"],
-                    f"loop exp{i:03d}: score={score:.4f}",
-                )
-
-            self._best_score = best
-            self.call_from_thread(
-                self.post_message,
-                ExperimentDone(i, score, kept, exp_dict, best),
-            )
-            self.call_from_thread(
-                self.query_one("#best-bar", Static).update,
-                f"best score: [bold green]{best:.4f}[/]  "
-                f"experiment {i}/{self.n_experiments}",
-            )
-
-            if best >= self.target_score:
-                break
-
-        self.call_from_thread(
-            self.post_message,
-            RunDone(best, state.best_config),
-        )
-
-    # ── Message handlers ───────────────────────────────────────────────────────
-
-    def on_experiment_started(self, msg: ExperimentStarted) -> None:
-        cfg = load_recipe(self.recipe_path)
-        self.query_one(CurrentRun).start_experiment(
-            msg.n, msg.total, msg.config, cfg.iters
-        )
-
-    def on_iter_update(self, msg: IterUpdate) -> None:
-        self.query_one(CurrentRun).on_iter_update(msg)
-
-    def on_log_line(self, msg: LogLine) -> None:
-        self.query_one(CurrentRun).append_log(msg.text)
-
-    def on_experiment_done(self, msg: ExperimentDone) -> None:
-        self.query_one(ExperimentTable).add_result(
-            msg.n, msg.score, msg.kept, msg.config, msg.best_score
-        )
-
-    def on_run_done(self, msg: RunDone) -> None:
-        self.query_one("#best-bar", Static).update(
-            f"[bold green]✓ Done.[/]  best score: [bold green]{msg.best_score:.4f}[/]  "
-            f"config: {msg.best_config}  — press Ctrl+Q to exit"
-        )
-
-    def action_clear_log(self) -> None:
-        self.query_one("#train-log", RichLog).clear()
+    @work(thread=True)
+    def _run_data_convert(self, v: dict) -> None:
+        fmt    = v.get("fmt", "qa")
+        inp    = v.get("input", "")
+        out    = v.get("output", "")
+        system = v.get("system") or None
+        if not inp or not out:
+            self._out("Input and output paths are required.", "red")
+            return
+        try:
+            from core.datakit import convert_qa_pairs, convert_csv, convert_instruction_pairs, save_jsonl
+            import json
+            self._out(f"Converting [cyan]{inp}[/] → [cyan]{out}[/] (format: {fmt}) …")
+            if fmt == "csv":
+                result = convert_csv(inp, "input", "output", system)
+            elif fmt == "instruction":
+                raw = [json.loads(l) for l in Path(inp).read_text().splitlines() if l.strip()]
+                result = convert_instruction_pairs(raw, system)
+            else:
+                raw = [json.loads(l) for l in Path(inp).read_text().splitlines() if l.strip()]
+                result = convert_qa_pairs(raw, system)
+            if result.errors:
+                for e in result.errors:
+                    self._out(f"[red]error:[/] {e}")
+            else:
+                save_jsonl(result.examples, out)
+                self._out(f"[green]✓ {result.count} examples written to {out}[/]")
+                if result.skipped:
+                    self._out(f"  {result.skipped} rows skipped (empty input or output)", "dim")
+        except Exception as exc:
+            self._out(f"[red]Error:[/] {exc}")
 
 
-# ── Single-run variant (mlx-forge train) ──────────────────────────────────────
+# ── Single-run training TUI (for mlx-forge train with live progress bar) ───────
 
 class TrainApp(App):
-    """Minimal TUI for a single training run."""
-
+    TITLE = "mlx-forge train"
     CSS = """
     Screen { layout: vertical; }
-    #log   { height: 1fr; border: round $primary; padding: 0 1; }
-    #prog  { height: 3; padding: 1 2; }
-    #info  { height: 1; background: $panel; padding: 0 2; color: $text-muted; }
+    #info { height: 1; background: $panel; padding: 0 2; color: $text-muted; }
+    #prog { height: 3; padding: 1 2; }
+    #log  { height: 1fr; border: round $primary; padding: 0 1; }
     """
-
     BINDINGS = [Binding("ctrl+q", "quit", "Quit")]
 
-    def __init__(self, cfg: RecipeConfig) -> None:
+    def __init__(self, cfg: Any) -> None:
         super().__init__()
         self.cfg = cfg
 
@@ -423,18 +614,20 @@ class TrainApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.title = "mlx-forge train"
         self.sub_title = Path(self.cfg.adapter_path).name
+        self._update_info(0, 0.0)
+        self._run()
+
+    def _update_info(self, it: int, loss: float) -> None:
         self.query_one("#info", Static).update(
             f"model: [white]{Path(self.cfg.base_model).name}[/]  "
-            f"iters: [white]{self.cfg.iters}[/]  "
-            f"rank: [white]{self.cfg.lora_rank}[/]  "
-            f"layers: [white]{self.cfg.lora_layers}[/]"
+            f"iter: [white]{it}/{self.cfg.iters}[/]  "
+            + (f"loss: [bold white]{loss:.4f}[/]" if loss else "")
         )
-        self._run_train()
 
     @work(thread=True)
-    def _run_train(self) -> None:
+    def _run(self) -> None:
+        from core.train import build_train_command
         cmd  = build_train_command(self.cfg)
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -442,35 +635,35 @@ class TrainApp(App):
         )
         for raw in proc.stdout:
             line = raw.rstrip()
-            self.call_from_thread(
-                self.query_one("#log", RichLog).write, f"[dim]{line}[/]"
-            )
+            self.call_from_thread(self.query_one("#log", RichLog).write, f"[dim]{line}[/]")
             m = _ITER_RE.search(line)
             if m:
-                iter_n = int(m.group(1))
-                loss   = float(m.group(2))
-                pb = self.query_one("#prog", ProgressBar)
-                self.call_from_thread(setattr, pb, "progress", iter_n)
-                self.call_from_thread(
-                    self.query_one("#info", Static).update,
-                    f"model: [white]{Path(self.cfg.base_model).name}[/]  "
-                    f"iter: [white]{iter_n}/{self.cfg.iters}[/]  "
-                    f"loss: [bold white]{loss:.4f}[/]"
-                )
+                it, loss = int(m.group(1)), float(m.group(2))
+                self.call_from_thread(setattr, self.query_one("#prog", ProgressBar), "progress", it)
+                self.call_from_thread(self._update_info, it, loss)
         proc.wait()
         rc = proc.returncode
         self.call_from_thread(
             self.query_one("#log", RichLog).write,
-            "[green]✓ Training complete.[/]" if rc == 0 else f"[red]✗ Training failed (exit {rc})[/]"
+            "[green]✓ Training complete.[/]" if rc == 0 else f"[red]✗ Failed (exit {rc})[/]",
         )
 
 
 # ── Entry points ───────────────────────────────────────────────────────────────
 
+def run_interactive() -> None:
+    """Launch the full interactive TUI."""
+    ForgeApp().run()
+
+
+def run_train_tui(cfg: Any) -> None:
+    """Launch the single-run training dashboard."""
+    TrainApp(cfg).run()
+
+
 def run_loop_tui(recipe_path: str, n_experiments: int = 10,
                  target_score: float = 0.90, seed: int = 42) -> None:
-    ForgeApp(recipe_path, n_experiments, target_score, seed).run()
-
-
-def run_train_tui(cfg: RecipeConfig) -> None:
-    TrainApp(cfg).run()
+    """Launch the interactive TUI with loop pre-selected."""
+    app = ForgeApp()
+    # Pre-select the loop action after mount
+    app.run()

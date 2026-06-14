@@ -192,7 +192,12 @@ DISPATCH = {
 def main() -> None:
     args = sys.argv[1:]
 
-    if not args or args[0] in ("-h", "--help", "help"):
+    if not args:
+        from core.tui import run_interactive
+        run_interactive()
+        return
+
+    if args[0] in ("-h", "--help", "help"):
         show_help()
         return
 
