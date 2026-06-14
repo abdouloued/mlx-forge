@@ -166,6 +166,42 @@ The only file you *must* rewrite is `eval.py`. The `core/` machinery is unchange
 
 ---
 
+## Preparing your data
+
+The model trains on chat JSONL — one JSON object per line with a `messages` array. See **[docs/data-guide.md](docs/data-guide.md)** for the full guide.
+
+**Quick validation:**
+
+```bash
+uv run python -m core.datakit validate recipes/toolcalling/data/train.jsonl
+# Total lines: 20 │ Valid: 20 │ Errors: 0
+```
+
+**Convert existing data to the right format:**
+
+```bash
+# From a CSV with question/answer columns
+uv run python -m core.datakit convert \
+  --from csv --input my_data.csv \
+  --input-col question --output-col answer \
+  --system "You are a helpful assistant." \
+  --output recipes/my_recipe/data/train.jsonl
+
+# From Q&A JSONL (input/output fields)
+uv run python -m core.datakit convert \
+  --from qa --input qa_pairs.jsonl \
+  --output train.jsonl
+
+# From Alpaca instruction format
+uv run python -m core.datakit convert \
+  --from instruction --input alpaca.jsonl \
+  --output train.jsonl
+```
+
+The data guide covers minimum dataset sizes, recipe-specific formats (tool schemas, ICD-10 codes), the train/valid split, and a pre-training quality checklist.
+
+---
+
 ## Architecture
 
 ```mermaid
