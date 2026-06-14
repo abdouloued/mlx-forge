@@ -325,10 +325,11 @@ class ForgeApp(App):
     """
 
     BINDINGS = [
-        Binding("ctrl+q",     "quit",        "Quit"),
-        Binding("ctrl+l",     "clear_output","Clear output"),
+        Binding("ctrl+c",     "quit",         "Quit"),
+        Binding("ctrl+k",     "clear_output", "Clear"),
         Binding("escape",     "focus_sidebar","Sidebar"),
-        Binding("ctrl+r",     "run_action",  "Run"),
+        Binding("ctrl+g",     "run_action",   "Run"),
+        Binding("f5",         "run_action",   "Run", show=False),
     ]
 
     def compose(self) -> ComposeResult:

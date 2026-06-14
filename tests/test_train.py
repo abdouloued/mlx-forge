@@ -23,27 +23,43 @@ def make_cfg(**kwargs) -> RecipeConfig:
 
 def test_command_includes_model():
     cmd = build_train_command(make_cfg())
-    assert "mlx-community/Qwen2.5-7B-Instruct-4bit" in " ".join(cmd)
+    assert "mlx-community/Qwen2.5-7B-Instruct-4bit" in cmd
 
 
 def test_command_includes_iters():
     cmd = build_train_command(make_cfg(iters=500))
-    assert "500" in " ".join(cmd)
+    assert "500" in cmd
 
 
-def test_command_includes_rank():
+def test_command_includes_num_layers():
+    cmd = build_train_command(make_cfg(lora_layers=16))
+    assert "--num-layers" in cmd
+    assert "16" in cmd
+
+
+def test_rank_goes_to_config_file():
+    # rank is now written to a temp YAML via -c, not passed as a CLI flag
     cmd = build_train_command(make_cfg(lora_rank=16))
-    assert "16" in " ".join(cmd)
+    assert "--rank" not in cmd
+    assert "-c" in cmd
 
 
 def test_command_includes_data_dir():
     cmd = build_train_command(make_cfg(data_dir="recipes/toolcalling/data"))
-    assert "recipes/toolcalling/data" in " ".join(cmd)
+    assert "recipes/toolcalling/data" in cmd
 
 
 def test_command_includes_adapter_path():
     cmd = build_train_command(make_cfg(adapter_path="adapters/run1"))
-    assert "adapters/run1" in " ".join(cmd)
+    assert "adapters/run1" in cmd
+
+
+def test_command_uses_new_entrypoint():
+    cmd = build_train_command(make_cfg())
+    # new form: python -m mlx_lm lora  (not python -m mlx_lm.lora)
+    joined = " ".join(cmd)
+    assert "mlx_lm.lora" not in joined
+    assert "mlx_lm" in joined and "lora" in joined
 
 
 def test_run_training_calls_subprocess():
