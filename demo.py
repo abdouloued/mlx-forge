@@ -6,8 +6,11 @@ Record with QuickTime (File → New Screen Recording) or:
   brew install asciinema && asciinema rec demo.cast
   asciinema play demo.cast
 """
+import json
+import subprocess
 import time
 import sys
+import urllib.request
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -239,25 +242,73 @@ def demo_export() -> None:
     sleep(0.8)
 
 
-# ── Step 5: inference check ────────────────────────────────────────────────────
+# ── Step 5: inference — real ollama call via REST API ─────────────────────────
+
+_OLLAMA_MODEL = "qwen3.5:2b"
+_OLLAMA_URL = "http://localhost:11434/api/chat"
+
+_SYSTEM = (
+    "You are a tool-calling assistant. Respond ONLY with a valid JSON object — "
+    "no prose, no markdown fences, no explanation. Format:\n"
+    '{"name": "<function_name>", "arguments": {"key": "value"}}'
+)
+_USER = "Book a flight from Paris to Tokyo on June 20."
+
+
+def _call_ollama(model: str, system: str, user: str) -> str:
+    payload = json.dumps({
+        "model": model,
+        "stream": False,
+        "think": False,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": "/no_think " + user},
+        ],
+    }).encode()
+    req = urllib.request.Request(
+        _OLLAMA_URL,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        data = json.loads(resp.read())
+    return data["message"]["content"].strip()
+
+
+def _pretty_json(text: str) -> str:
+    """Return indented JSON if parseable, else strip markdown fences and return as-is."""
+    import re
+    text = re.sub(r"```(?:json)?\s*", "", text).strip().rstrip("`").strip()
+    try:
+        return json.dumps(json.loads(text), indent=2)
+    except json.JSONDecodeError:
+        return text
+
 
 def demo_inference() -> None:
-    console.print(Rule("[bold cyan]Step 5 — run the model[/]", style="cyan"))
+    console.print(Rule("[bold cyan]Step 5 — run the model (live)[/]", style="cyan"))
     sleep(0.5)
-    prompt('ollama run qwen-toolcalling "Book a flight from Paris to Tokyo on June 20"')
-    sleep(0.8)
+    console.print(
+        f"  [dim]Using [/][white]{_OLLAMA_MODEL}[/][dim] "
+        "— stand-in for the fine-tuned adapter[/]"
+    )
+    console.print()
+    sleep(0.4)
+    prompt(f'ollama run {_OLLAMA_MODEL} "Book a flight from Paris to Tokyo on June 20"')
+    sleep(0.4)
 
-    response = '''\
-{
-  "name": "book_flight",
-  "arguments": {
-    "origin": "Paris",
-    "destination": "Tokyo",
-    "date": "2026-06-20"
-  }
-}'''
-    for line in response.splitlines():
-        sleep(0.08 if not FAST else 0.0)
+    with Progress(SpinnerColumn(), TextColumn("{task.description}"),
+                  console=console, transient=True) as p:
+        t = p.add_task("running inference …", total=None)
+        try:
+            raw = _call_ollama(_OLLAMA_MODEL, _SYSTEM, _USER)
+            output = _pretty_json(raw)
+        except Exception as exc:
+            output = f"(inference error: {exc})"
+        p.remove_task(t)
+
+    for line in output.splitlines():
+        sleep(0.06 if not FAST else 0.0)
         console.print(f"  [bold cyan]{line}[/]")
 
     console.print()
