@@ -242,16 +242,16 @@ class FormPanel(Widget):
         yield ScrollableContainer(id="form-fields")
         yield Button("▶  Run", id="run-btn", variant="primary")
 
-    def show_action(self, action: Action) -> None:
+    async def show_action(self, action: Action) -> None:
         self.current_action = action.name
         self.query_one("#form-title", Label).update(f"{action.icon}  {action.label}")
         self.query_one("#form-desc",  Label).update(action.description)
 
         container = self.query_one("#form-fields", ScrollableContainer)
-        container.remove_children()
+        await container.remove_children()
         for f in action.fields:
-            container.mount(Label(f.label, classes="field-label"))
-            container.mount(
+            await container.mount(Label(f.label, classes="field-label"))
+            await container.mount(
                 Input(
                     value=f.default,
                     placeholder=f.placeholder,
@@ -325,18 +325,36 @@ class ForgeApp(App):
         layout: vertical;
         width: 1fr;
     }
+
+    #status-running {
+        background: $warning 20%;
+        color: $warning;
+        padding: 0 2;
+        height: 1;
+        display: none;
+    }
+
+    #status-running.visible {
+        display: block;
+    }
     """
 
     BINDINGS = [
-        Binding("ctrl+c",     "quit",         "Quit"),
-        Binding("ctrl+k",     "clear_output", "Clear"),
-        Binding("escape",     "focus_sidebar","Sidebar"),
-        Binding("ctrl+g",     "run_action",   "Run"),
-        Binding("f5",         "run_action",   "Run", show=False),
+        Binding("ctrl+c",  "quit",          "Quit"),
+        Binding("ctrl+k",  "clear_output",  "Clear"),
+        Binding("escape",  "focus_sidebar", "Sidebar"),
+        Binding("ctrl+g",  "run_action",    "Run"),
+        Binding("f5",      "run_action",    "Run", show=False),
     ]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._is_running = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
+        yield Static("⏳ Running — wait for the job to finish before switching actions",
+                     id="status-running")
         with Horizontal(id="body"):
             yield Sidebar()
             with Vertical(id="right"):
@@ -345,30 +363,52 @@ class ForgeApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        # Select first action by default
         self.query_one("#action-list", ListView).index = 0
-        self.query_one(FormPanel).show_action(ACTIONS[0])
+        self.call_after_refresh(self._init_form)
+
+    def _init_form(self) -> None:
+        self.run_worker(
+            self.query_one(FormPanel).show_action(ACTIONS[0]),
+            exclusive=False,
+        )
         self.query_one("#action-list", ListView).focus()
 
     @on(ListView.Selected, "#action-list")
-    def on_action_selected(self, event: ListView.Selected) -> None:
+    async def on_action_selected(self, event: ListView.Selected) -> None:
+        if self._is_running:
+            self.query_one(OutputPanel).write(
+                "[yellow]⚠ Job in progress — finish or wait before switching actions.[/]"
+            )
+            return
         item_id = event.item.id or ""
         if item_id.startswith("action-"):
             name = item_id[len("action-"):]
             if name in ACTION_MAP:
-                self.query_one(FormPanel).show_action(ACTION_MAP[name])
+                await self.query_one(FormPanel).show_action(ACTION_MAP[name])
 
     @on(Button.Pressed, "#run-btn")
     def on_run_pressed(self) -> None:
         self.action_run_action()
 
     def action_run_action(self) -> None:
-        panel = self.query_one(FormPanel)
-        name   = panel.current_action
+        if self._is_running:
+            self.query_one(OutputPanel).write(
+                "[yellow]⚠ Already running — wait for the job to finish.[/]"
+            )
+            return
+        panel  = self.query_one(FormPanel)
         values = panel.get_values()
-        out    = self.query_one(OutputPanel)
-        out.clear()
-        self._dispatch(name, values)
+        self.query_one(OutputPanel).clear()
+        self._set_running(True)
+        self._dispatch(panel.current_action, values)
+
+    def _set_running(self, running: bool) -> None:
+        self._is_running = running
+        bar = self.query_one("#status-running", Static)
+        if running:
+            bar.add_class("visible")
+        else:
+            bar.remove_class("visible")
 
     def action_focus_sidebar(self) -> None:
         self.query_one("#action-list", ListView).focus()
@@ -386,19 +426,21 @@ class ForgeApp(App):
 
     def _dispatch(self, name: str, values: dict[str, str]) -> None:
         handlers = {
-            "download":     self._run_download,
-            "train":        self._run_train,
-            "eval":         self._run_eval,
-            "fuse":         self._run_fuse,
-            "loop":         self._run_loop,
-            "export":       self._run_export,
-            "push":         self._run_push,
-            "data_validate":self._run_data_validate,
-            "data_convert": self._run_data_convert,
+            "download":      self._run_download,
+            "train":         self._run_train,
+            "eval":          self._run_eval,
+            "fuse":          self._run_fuse,
+            "loop":          self._run_loop,
+            "export":        self._run_export,
+            "push":          self._run_push,
+            "data_validate": self._run_data_validate,
+            "data_convert":  self._run_data_convert,
         }
         handler = handlers.get(name)
         if handler:
             handler(values)
+        else:
+            self._set_running(False)
 
     # ── Workers ────────────────────────────────────────────────────────────────
 
@@ -413,12 +455,15 @@ class ForgeApp(App):
         proc.wait()
         return proc.returncode
 
+    def _done(self) -> None:
+        self.call_from_thread(self._set_running, False)
+
     @work(thread=True)
     def _run_download(self, v: dict) -> None:
         model_id = v.get("model_id", "").strip()
         if not model_id:
             self._out("Model ID is required.", "red")
-            return
+            self._done(); return
         self._out(f"Downloading [cyan]{model_id}[/] …")
         try:
             from huggingface_hub import snapshot_download
@@ -426,13 +471,14 @@ class ForgeApp(App):
                 repo_id=model_id,
                 ignore_patterns=["*.msgpack", "flax_model*", "tf_model*"],
             )
-            self._out(f"Loading model to verify …")
+            self._out("Loading model to verify …")
             from mlx_lm import load
             load(model_id)
             self._out(f"[green]✓ {model_id}[/]")
             self._out(f"  path: {local}", "dim")
         except Exception as exc:
             self._out(f"[red]Error:[/] {exc}")
+        self._done()
 
     @work(thread=True)
     def _run_train(self, v: dict) -> None:
@@ -455,6 +501,7 @@ class ForgeApp(App):
                 self._out(f"[red]Training failed (exit {rc})[/]")
         except Exception as exc:
             self._out(f"[red]Error:[/] {exc}")
+        self._done()
 
     @work(thread=True)
     def _run_eval(self, v: dict) -> None:
@@ -474,6 +521,7 @@ class ForgeApp(App):
             self._out(f"score = [{color}]{score:.4f}[/]")
         except Exception as exc:
             self._out(f"[red]Error:[/] {exc}")
+        self._done()
 
     @work(thread=True)
     def _run_fuse(self, v: dict) -> None:
@@ -490,6 +538,7 @@ class ForgeApp(App):
             self._out(f"[green]✓ fused weights saved to {cfg.fused_path}[/]")
         except Exception as exc:
             self._out(f"[red]Error:[/] {exc}")
+        self._done()
 
     @work(thread=True)
     def _run_loop(self, v: dict) -> None:
@@ -506,6 +555,7 @@ class ForgeApp(App):
             self._out("[green]✓ Loop complete.[/]")
         except Exception as exc:
             self._out(f"[red]Error:[/] {exc}")
+        self._done()
 
     @work(thread=True)
     def _run_export(self, v: dict) -> None:
@@ -528,6 +578,7 @@ class ForgeApp(App):
             self._out(f"[green]✓ {v['output']}[/]")
         except Exception as exc:
             self._out(f"[red]Error:[/] {exc}")
+        self._done()
 
     @work(thread=True)
     def _run_push(self, v: dict) -> None:
@@ -545,6 +596,7 @@ class ForgeApp(App):
             self._out(f"[green]✓ huggingface.co/{repo}[/]")
         except Exception as exc:
             self._out(f"[red]Error:[/] {exc}")
+        self._done()
 
     @work(thread=True)
     def _run_data_validate(self, v: dict) -> None:
@@ -563,6 +615,7 @@ class ForgeApp(App):
                 self._out(f"[red]{report.error_count} error(s) found.[/]")
         except Exception as exc:
             self._out(f"[red]Error:[/] {exc}")
+        self._done()
 
     @work(thread=True)
     def _run_data_convert(self, v: dict) -> None:
@@ -595,6 +648,7 @@ class ForgeApp(App):
                     self._out(f"  {result.skipped} rows skipped (empty input or output)", "dim")
         except Exception as exc:
             self._out(f"[red]Error:[/] {exc}")
+        self._done()
 
 
 # ── Single-run training TUI (for mlx-forge train with live progress bar) ───────
