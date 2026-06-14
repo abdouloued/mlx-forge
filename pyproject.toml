@@ -12,13 +12,7 @@ dependencies = [
 ]
 
 [project.scripts]
-mlx-download = "core.download:main"
-mlx-train    = "core.train:main"
-mlx-eval     = "recipes.toolcalling.eval:main"
-mlx-fuse     = "core.fuse:main"
-mlx-export   = "core.export_gguf:main"
-mlx-push     = "core.push_hf:main"
-mlx-data     = "core.datakit:main"
+mlx-forge = "core.cli:main"
 
 [build-system]
 requires = ["hatchling"]

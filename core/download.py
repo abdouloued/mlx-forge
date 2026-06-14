@@ -61,11 +61,11 @@ def main() -> None:
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
         console.print(
             "\n[bold white]Usage:[/]\n"
-            "  uv run mlx-download [bold cyan]<model-id>[/]\n\n"
+            "  uv run mlx-forge download [bold cyan]<model-id>[/]\n\n"
             "[bold white]Examples:[/]\n"
-            "  uv run mlx-download mlx-community/Qwen2.5-7B-Instruct-4bit\n"
-            "  uv run mlx-download mlx-community/Phi-4-mini-instruct-4bit\n"
-            "  uv run mlx-download mlx-community/Llama-3.2-3B-Instruct-4bit\n\n"
+            "  uv run mlx-forge download mlx-community/Qwen2.5-7B-Instruct-4bit\n"
+            "  uv run mlx-forge download mlx-community/Phi-4-mini-instruct-4bit\n"
+            "  uv run mlx-forge download mlx-community/Llama-3.2-3B-Instruct-4bit\n\n"
             "[dim]Models are cached at ~/.cache/huggingface/hub/ and reused on future runs.[/]\n"
         )
         sys.exit(0)
