@@ -204,18 +204,21 @@ class FormPanel(Widget):
     FormPanel {
         width: 1fr;
         border: none;
-        padding: 1 3;
+        padding: 1 3 0 3;
         height: auto;
-        max-height: 18;
+        max-height: 40;
     }
     FormPanel Label.form-title {
         text-style: bold;
         color: $text;
-        margin-bottom: 0;
     }
     FormPanel Label.form-desc {
         color: $text-muted;
         margin-bottom: 1;
+    }
+    FormPanel #form-fields {
+        height: auto;
+        overflow-y: auto;
     }
     FormPanel Label.field-label {
         color: $text-muted;
@@ -226,6 +229,7 @@ class FormPanel(Widget):
     }
     FormPanel Button {
         margin-top: 1;
+        margin-bottom: 1;
         width: 14;
     }
     """
@@ -233,9 +237,9 @@ class FormPanel(Widget):
     current_action: reactive[str] = reactive("download")
 
     def compose(self) -> ComposeResult:
-        yield Label("", id="form-title",   classes="form-title")
-        yield Label("", id="form-desc",    classes="form-desc")
-        yield Static(id="form-fields")
+        yield Label("", id="form-title", classes="form-title")
+        yield Label("", id="form-desc",  classes="form-desc")
+        yield ScrollableContainer(id="form-fields")
         yield Button("▶  Run", id="run-btn", variant="primary")
 
     def show_action(self, action: Action) -> None:
@@ -243,7 +247,7 @@ class FormPanel(Widget):
         self.query_one("#form-title", Label).update(f"{action.icon}  {action.label}")
         self.query_one("#form-desc",  Label).update(action.description)
 
-        container = self.query_one("#form-fields", Static)
+        container = self.query_one("#form-fields", ScrollableContainer)
         container.remove_children()
         for f in action.fields:
             container.mount(Label(f.label, classes="field-label"))
@@ -261,8 +265,7 @@ class FormPanel(Widget):
         result: dict[str, str] = {}
         for f in action.fields:
             try:
-                widget = self.query_one(f"#field-{f.id}", Input)
-                result[f.id] = widget.value.strip()
+                result[f.id] = self.query_one(f"#field-{f.id}", Input).value.strip()
             except Exception:
                 result[f.id] = f.default
         return result
