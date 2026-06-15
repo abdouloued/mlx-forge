@@ -3,21 +3,28 @@ from __future__ import annotations
 
 import re
 import subprocess
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, ScrollableContainer
+from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import (
-    Button, Footer, Header, Input, Label,
-    ListItem, ListView, ProgressBar, RichLog, Static, Rule,
+    Button,
+    Footer,
+    Header,
+    Input,
+    Label,
+    ListItem,
+    ListView,
+    ProgressBar,
+    RichLog,
+    Static,
 )
 
 _ITER_RE = re.compile(r"Iter\s+(\d+):\s+Train loss\s+([\d.]+)")
@@ -473,7 +480,8 @@ class ForgeApp(App):
         model_id = v.get("model_id", "").strip()
         if not model_id:
             self._out("Model ID is required.", "red")
-            self._done(); return
+            self._done()
+            return
         self._out(f"Downloading [cyan]{model_id}[/] …")
         try:
             from huggingface_hub import snapshot_download
@@ -495,13 +503,17 @@ class ForgeApp(App):
         recipe = v.get("recipe", "")
         if not recipe:
             self._out("Recipe path is required.", "red")
-            self._done(); return
+            self._done()
+            return
         try:
-            from core.config import load_recipe
             import dataclasses
+
+            from core.config import load_recipe
             cfg = load_recipe(recipe)
-            if v.get("iters"):  cfg = dataclasses.replace(cfg, iters=int(v["iters"]))
-            if v.get("rank"):   cfg = dataclasses.replace(cfg, lora_rank=int(v["rank"]))
+            if v.get("iters"):
+                cfg = dataclasses.replace(cfg, iters=int(v["iters"]))
+            if v.get("rank"):
+                cfg = dataclasses.replace(cfg, lora_rank=int(v["rank"]))
             from core.train import build_train_command
             self._out(f"Training [cyan]{Path(cfg.base_model).name}[/] for {cfg.iters} iters …")
             rc = self._stream(build_train_command(cfg))
@@ -518,9 +530,11 @@ class ForgeApp(App):
         recipe = v.get("recipe", "")
         if not recipe:
             self._out("Recipe path is required.", "red")
-            self._done(); return
+            self._done()
+            return
         try:
             import importlib
+
             from core.config import load_recipe
             cfg  = load_recipe(recipe)
             name = Path(recipe).parent.name
@@ -538,7 +552,8 @@ class ForgeApp(App):
         recipe = v.get("recipe", "")
         if not recipe:
             self._out("Recipe path is required.", "red")
-            self._done(); return
+            self._done()
+            return
         try:
             from core.config import load_recipe
             from core.fuse import fuse_adapter
@@ -555,7 +570,8 @@ class ForgeApp(App):
         recipe = v.get("recipe", "")
         if not recipe:
             self._out("Recipe path is required.", "red")
-            self._done(); return
+            self._done()
+            return
         try:
             n      = int(v.get("n_experiments") or 10)
             target = float(v.get("target_score") or 0.90)
@@ -572,7 +588,8 @@ class ForgeApp(App):
         recipe = v.get("recipe", "")
         if not recipe or not v.get("llama_cpp") or not v.get("output"):
             self._out("Recipe, llama.cpp dir, and output path are all required.", "red")
-            self._done(); return
+            self._done()
+            return
         try:
             from core.config import load_recipe
             from core.export_gguf import export_gguf
@@ -596,7 +613,8 @@ class ForgeApp(App):
         repo   = v.get("repo_id", "")
         if not recipe or not repo:
             self._out("Recipe and repo ID are both required.", "red")
-            self._done(); return
+            self._done()
+            return
         try:
             from core.config import load_recipe
             from core.push_hf import push_to_hf
@@ -613,7 +631,8 @@ class ForgeApp(App):
         path = v.get("file", "")
         if not path:
             self._out("File path is required.", "red")
-            self._done(); return
+            self._done()
+            return
         try:
             from core.datakit import validate_jsonl
             self._out(f"Validating [cyan]{path}[/] …")
@@ -635,18 +654,25 @@ class ForgeApp(App):
         system = v.get("system") or None
         if not inp or not out:
             self._out("Input and output paths are required.", "red")
-            self._done(); return
+            self._done()
+            return
         try:
-            from core.datakit import convert_qa_pairs, convert_csv, convert_instruction_pairs, save_jsonl
             import json
+
+            from core.datakit import (
+                convert_csv,
+                convert_instruction_pairs,
+                convert_qa_pairs,
+                save_jsonl,
+            )
             self._out(f"Converting [cyan]{inp}[/] → [cyan]{out}[/] (format: {fmt}) …")
             if fmt == "csv":
                 result = convert_csv(inp, "input", "output", system)
             elif fmt == "instruction":
-                raw = [json.loads(l) for l in Path(inp).read_text().splitlines() if l.strip()]
+                raw = [json.loads(line) for line in Path(inp).read_text().splitlines() if line.strip()]
                 result = convert_instruction_pairs(raw, system)
             else:
-                raw = [json.loads(l) for l in Path(inp).read_text().splitlines() if l.strip()]
+                raw = [json.loads(line) for line in Path(inp).read_text().splitlines() if line.strip()]
                 result = convert_qa_pairs(raw, system)
             if result.errors:
                 for e in result.errors:

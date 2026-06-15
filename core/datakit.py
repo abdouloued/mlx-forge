@@ -4,7 +4,7 @@ import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 VALID_ROLES = {"system", "user", "assistant", "tool"}
 
@@ -271,10 +271,10 @@ def _cli_convert(args: list[str]) -> None:
             parsed.input, parsed.input_col, parsed.output_col, parsed.system
         )
     elif parsed.fmt == "qa":
-        raw = [json.loads(l) for l in Path(parsed.input).read_text().splitlines() if l.strip()]
+        raw = [json.loads(line) for line in Path(parsed.input).read_text().splitlines() if line.strip()]
         result = convert_qa_pairs(raw, parsed.system, parsed.input_col, parsed.output_col)
     else:
-        raw = [json.loads(l) for l in Path(parsed.input).read_text().splitlines() if l.strip()]
+        raw = [json.loads(line) for line in Path(parsed.input).read_text().splitlines() if line.strip()]
         result = convert_instruction_pairs(raw, parsed.system)
 
     if result.errors:

@@ -1,5 +1,11 @@
 # mlx-forge
 
+[![Tests](https://github.com/abdouloued/mlx-forge/actions/workflows/tests.yml/badge.svg)](https://github.com/abdouloued/mlx-forge/actions/workflows/tests.yml)
+[![Lint](https://github.com/abdouloued/mlx-forge/actions/workflows/lint.yml/badge.svg)](https://github.com/abdouloued/mlx-forge/actions/workflows/lint.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://python.org)
+[![Apple Silicon](https://img.shields.io/badge/Apple_Silicon-required-black.svg)](https://apple.com/silicon)
+
 **Overnight, your Mac fine-tunes and ships a model that runs on your phone — with the evals to prove it's actually good.**
 
 mlx-forge is a Mac-native fine-tuning factory. It takes an open-weight model, fine-tunes it for a specific task using MLX on Apple Silicon, proves the result is good with a real per-task evaluation, and exports it for deployment to Hugging Face and Ollama.
@@ -12,6 +18,20 @@ mlx-forge is a Mac-native fine-tuning factory. It takes an open-weight model, fi
 ## Why evals first?
 
 Most fine-tuning tools show you a loss curve and call it done. mlx-forge makes evaluation the centre of the workflow. Without a trustworthy eval, a loop just produces bad models faster. Every recipe ships a real `eval.py` that returns a single comparable score (0–1). The auto-search loop (Phase 2) uses that score as the ratchet — it only keeps experiments that beat the current best.
+
+---
+
+## Hardware requirements
+
+| Mac | RAM | 7B 4-bit LoRA (500 iters) | Inference |
+|-----|-----|--------------------------|-----------|
+| M1 | 8GB | ~35 min (rank=4, batch=2) | fast |
+| M2 Pro | 16GB | ~25 min | fast |
+| M2 Max | 32GB | ~18 min | fast |
+| M3 Max | 128GB | ~12 min | fast |
+| M4 Ultra | 192GB | ~8 min | fastest |
+
+Unified memory matters: base model weights and LoRA adapter share the same pool — no VRAM wall. A 7B model at 4-bit quantisation fits in 4–6GB, leaving the rest free for the adapter and activations.
 
 ---
 
@@ -332,6 +352,63 @@ Edit `recipes/toolcalling/program.md` to adjust notes and context. The search sp
 | `lora_rank` | 4, 8, 16, 32 |
 | `lora_layers` | 8, 16, 24, 32 |
 | `batch_size` | 2, 4, 8 |
+
+---
+
+## Troubleshooting
+
+**OOM during training**
+```bash
+# Reduce memory pressure in recipe.yaml:
+grad_checkpoint: true
+batch_size: 2
+lora_rank: 4
+lora_layers: 8
+```
+
+**Score stays at 0.0 after training**
+
+Check data format first — the scorer returns 0 for any malformed example:
+```bash
+uv run python -m core.datakit validate recipes/toolcalling/data/valid.jsonl
+```
+Also verify the adapter path exists: `ls adapters/toolcalling/`
+
+**"Training failed with exit code 1"**
+
+Run the command manually to see the real error:
+```bash
+uv run python -m mlx_lm lora --help
+```
+Common cause: mlx-lm version mismatch. Run `uv sync` to update.
+
+**GGUF export fails**
+
+`llama-quantize` must be on `$PATH`. Check:
+```bash
+which llama-quantize || which llama-quantize-metal
+```
+If missing, build llama.cpp with `cmake -DLLAMA_METAL=on` and add the `build/bin/` dir to your PATH.
+
+**HuggingFace push fails with 401**
+```bash
+uv run huggingface-cli login
+```
+
+**TUI won't launch**
+
+Requires Textual 0.70+. Check version:
+```bash
+uv run python -c "import textual; print(textual.__version__)"
+```
+
+**Loop doesn't improve the score**
+
+- Dataset too small: ensure ≥100 train examples per recipe
+- Search space exhausted: the loop randomises within `SEARCH_SPACE` in `core/loop.py` — if all values have been tried, add new values
+- Eval is non-deterministic: temperature-based generation can vary — add `temperature=0.0` to the generate call in `eval.py`
+
+See [docs/troubleshooting.md](docs/troubleshooting.md) for more.
 
 ---
 

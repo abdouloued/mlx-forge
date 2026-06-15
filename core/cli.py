@@ -1,9 +1,10 @@
 """mlx-forge — unified CLI entry point."""
 import sys
+
+from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich import box
 
 console = Console()
 
@@ -66,12 +67,15 @@ def cmd_train(args: list[str]) -> None:
     p.add_argument("--rank",  type=int, help="override lora_rank from recipe")
     parsed = p.parse_args(args)
 
-    from core.config import load_recipe
     import dataclasses
+
+    from core.config import load_recipe
     cfg = load_recipe(parsed.recipe)
     overrides = {}
-    if parsed.iters: overrides["iters"] = parsed.iters
-    if parsed.rank:  overrides["lora_rank"] = parsed.rank
+    if parsed.iters:
+        overrides["iters"] = parsed.iters
+    if parsed.rank:
+        overrides["lora_rank"] = parsed.rank
     if overrides:
         cfg = dataclasses.replace(cfg, **overrides)
 
@@ -89,7 +93,8 @@ def cmd_eval(args: list[str]) -> None:
     cfg = load_recipe(parsed.recipe)
 
     # defer to the recipe's own eval module
-    import importlib, pathlib
+    import importlib
+    import pathlib
     recipe_name = pathlib.Path(parsed.recipe).parent.name
     mod = importlib.import_module(f"recipes.{recipe_name}.eval")
     score = mod.evaluate(cfg.base_model, cfg.data_dir, adapter_path=cfg.adapter_path)
@@ -205,7 +210,7 @@ def main() -> None:
 
     if cmd not in DISPATCH:
         console.print(f"\n  [red]Unknown command:[/] {cmd!r}\n")
-        console.print(f"  Run [white]mlx-forge --help[/] to see available commands.\n")
+        console.print("  Run [white]mlx-forge --help[/] to see available commands.\n")
         sys.exit(1)
 
     try:

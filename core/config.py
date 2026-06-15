@@ -1,7 +1,21 @@
+"""
+RecipeConfig — the contract between core/ and recipes/.
+
+A recipe is a directory containing recipe.yaml, data/, eval.py, and optionally
+program.md (loop search constraints). Loading a recipe.yaml via load_recipe()
+returns a RecipeConfig instance that every core function consumes.
+
+Key design rules:
+- All paths stored as strings so they serialise cleanly to YAML for loop diffs.
+- validate() is called by load_recipe() — callers never need to call it manually.
+- Adding a new field here requires a matching entry in CONTRIBUTING.md field table.
+"""
 from __future__ import annotations
-from dataclasses import dataclass, field
+
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional
+
 import yaml
 
 

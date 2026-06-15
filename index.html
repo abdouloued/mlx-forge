@@ -200,6 +200,47 @@
     }
     footer a { color: var(--accent); text-decoration: none; }
     footer a:hover { text-decoration: underline; }
+
+    /* WHY LOCAL */
+    .why-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px; margin-top: 16px;
+    }
+    .why-item {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 20px;
+    }
+    .why-icon { font-size: 24px; margin-bottom: 10px; }
+    .why-item h3 { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+    .why-item p { font-size: 13px; }
+
+    /* HOW IT WORKS */
+    .steps { display: flex; flex-direction: column; gap: 0; margin-top: 16px; }
+    .step {
+      display: flex; gap: 20px; padding: 20px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .step:last-child { border-bottom: none; }
+    .step-num {
+      font-family: var(--mono); font-size: 28px; font-weight: 800;
+      color: var(--accent); min-width: 40px; line-height: 1;
+    }
+    .step-body h3 { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+    .step-body p { font-size: 13px; }
+
+    /* COMMUNITY */
+    .community-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px; margin-top: 16px;
+    }
+    .comm-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 20px; text-decoration: none;
+      transition: border-color .15s; display: block;
+    }
+    .comm-card:hover { border-color: var(--accent); }
+    .comm-card h3 { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+    .comm-card p { font-size: 13px; }
   </style>
 </head>
 <body>
@@ -207,6 +248,7 @@
 <!-- NAV -->
 <nav>
   <a class="nav-logo" href="#"><span>mlx</span>-forge</a>
+  <a href="#why">Why local?</a>
   <a href="#recipes">Recipes</a>
   <a href="#evals">Evals</a>
   <a href="#quickstart">Quick start</a>
@@ -294,6 +336,38 @@
   </div>
 </div>
 
+<!-- WHY LOCAL -->
+<section id="why">
+  <h2>Why <span>local</span> inference?</h2>
+  <p>
+    The next wave of AI isn't in the cloud — it's on the device in your pocket.
+    Open-weight models are getting better faster than proprietary ones, and Apple Silicon
+    makes the economics work for the first time.
+  </p>
+  <div class="why-grid">
+    <div class="why-item">
+      <div class="why-icon">🔒</div>
+      <h3>Privacy by default</h3>
+      <p>Training data and inference stay on your machine. No API calls, no data leaving the device.</p>
+    </div>
+    <div class="why-item">
+      <div class="why-icon">⚡</div>
+      <h3>Zero latency</h3>
+      <p>No round-trip to a server. Responses start in milliseconds, not seconds.</p>
+    </div>
+    <div class="why-item">
+      <div class="why-icon">💰</div>
+      <h3>Zero inference cost</h3>
+      <p>You own the weights. Once trained, inference is free — forever, at any scale.</p>
+    </div>
+    <div class="why-item">
+      <div class="why-icon">📦</div>
+      <h3>Open weights are the future</h3>
+      <p>Qwen, Phi, Mistral, Llama — the open-weight ecosystem is accelerating. Local distribution is how they ship.</p>
+    </div>
+  </div>
+</section>
+
 <!-- EVALS SECTION -->
 <section id="evals">
   <h2>Evals are the <span>product</span></h2>
@@ -349,13 +423,13 @@
       <div class="card-tag tag-blue">toolcalling</div>
       <h3>JSON Tool-calling</h3>
       <p>Fine-tune any model to reliably call functions. The reference recipe — build this first.</p>
-      <div class="card-metric">scorer: 4-criterion (0–1) &nbsp;·&nbsp; <span>20 train / 8 valid</span></div>
+      <div class="card-metric">scorer: 4-criterion (0–1) &nbsp;·&nbsp; <span>100 train / 30 valid</span></div>
     </div>
     <div class="card">
       <div class="card-tag tag-green">edge_android</div>
       <h3>Edge / Mobile</h3>
       <p>Compact assistant for on-device deployment. Scores correctness <em>and</em> conciseness — verbose answers fail.</p>
-      <div class="card-metric">scorer: keyword + word budget &nbsp;·&nbsp; <span>Phi-4-mini base</span></div>
+      <div class="card-metric">scorer: keyword + word budget &nbsp;·&nbsp; <span>100 train / 30 valid</span></div>
     </div>
     <div class="card">
       <div class="card-tag tag-orange">healthcare_coding</div>
@@ -368,6 +442,49 @@
       <h3>Data Flywheel</h3>
       <p>The model generates its own training data. Good outputs get added to train.jsonl. Retrain. Repeat.</p>
       <div class="card-metric">generate → judge → append → retrain &nbsp;·&nbsp; <span>3 rounds default</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section id="how">
+  <h2>How it <span>works</span></h2>
+  <p>Five steps from base model to a model running on your phone.</p>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h3>Download a base model</h3>
+        <p>Pick any <a href="https://huggingface.co/mlx-community" style="color:var(--accent)" target="_blank">mlx-community</a> model in HuggingFace safetensors format. 4-bit quantised 7B models fit in 4–6GB of unified memory.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h3>Choose or create a recipe</h3>
+        <p>Pick a built-in recipe (toolcalling, edge_android, healthcare_coding) or copy one and write your own <code>eval.py</code>. Minimum 100 training examples.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h3>Fine-tune with LoRA on Apple Silicon</h3>
+        <p>mlx-forge calls <code>mlx_lm lora</code> under the hood. A 500-iter run on a 7B model takes ~25 minutes on an M2 Pro.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h3>Auto-search overnight (optional)</h3>
+        <p>Run the ratchet loop: propose a hyperparameter change → train → score → keep if better → repeat. Git history is your experiment log.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <h3>Ship — when you decide it's ready</h3>
+        <p>Fuse the LoRA adapter into full weights. Export to GGUF for Ollama on-device. Push to Hugging Face. mlx-forge never publishes automatically.</p>
+      </div>
     </div>
   </div>
 </section>
@@ -411,16 +528,46 @@
   </div>
 </section>
 
+<!-- COMMUNITY -->
+<section id="community">
+  <h2>Get <span>involved</span></h2>
+  <p>mlx-forge is MIT licensed. Contributions, new recipes, and bug reports are welcome.</p>
+  <div class="community-grid">
+    <a class="comm-card" href="https://github.com/abdouloued/mlx-forge" target="_blank">
+      <h3>⭐ Star on GitHub</h3>
+      <p>Browse the source, open issues, and follow development.</p>
+    </a>
+    <a class="comm-card" href="https://github.com/abdouloued/mlx-forge/issues/new?template=bug_report.md" target="_blank">
+      <h3>🐛 Report a bug</h3>
+      <p>Something broken? Open an issue with the bug report template.</p>
+    </a>
+    <a class="comm-card" href="https://github.com/abdouloued/mlx-forge/blob/main/CONTRIBUTING.md" target="_blank">
+      <h3>🍴 Add a recipe</h3>
+      <p>Read the contributing guide and add your own fine-tuning task.</p>
+    </a>
+    <a class="comm-card" href="https://github.com/abdouloued/mlx-forge/blob/main/CHANGELOG.md" target="_blank">
+      <h3>📋 Changelog</h3>
+      <p>See what's new in each release.</p>
+    </a>
+  </div>
+</section>
+
 <!-- FOOTER -->
 <footer>
   <p>
-    <strong style="color:var(--text)">mlx-forge</strong> is open source under the MIT licence.
-    Loop pattern inspired by Karpathy's
-    <a href="https://github.com/karpathy/autoresearch" target="_blank">autoresearch</a>.
+    <strong style="color:var(--text)">mlx-forge</strong> — MIT licence ·
+    Built for Apple Silicon · No NVIDIA required
   </p>
   <p style="margin-top:8px">
     <a href="https://github.com/abdouloued/mlx-forge" target="_blank">GitHub</a> ·
-    Built for Apple Silicon · No NVIDIA required
+    <a href="https://github.com/abdouloued/mlx-forge/blob/main/CONTRIBUTING.md" target="_blank">Contributing</a> ·
+    <a href="https://github.com/abdouloued/mlx-forge/blob/main/CHANGELOG.md" target="_blank">Changelog</a> ·
+    <a href="https://github.com/abdouloued/mlx-forge/blob/main/docs/architecture.md" target="_blank">Architecture</a>
+  </p>
+  <p style="margin-top:8px; font-size:12px">
+    Loop pattern inspired by Karpathy's
+    <a href="https://github.com/karpathy/autoresearch" target="_blank">autoresearch</a>.
+    This project differs fundamentally: fine-tuning (not pretraining), MLX (not CUDA), shippable models (not research demos).
   </p>
 </footer>
 

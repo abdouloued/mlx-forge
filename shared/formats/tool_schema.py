@@ -1,4 +1,14 @@
+"""
+Tool call schema validation for the toolcalling recipe.
+
+Expected format (assistant turn content, JSON-encoded):
+  {"name": "get_weather", "arguments": {"location": "Paris", "unit": "celsius"}}
+
+The scorer in recipes/toolcalling/scorer.py calls validate_tool_call() before
+checking argument values, so any format error scores 0.0 cleanly.
+"""
 from __future__ import annotations
+
 from typing import Any
 
 
