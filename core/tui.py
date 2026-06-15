@@ -362,7 +362,7 @@ class ForgeApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        yield Static("⏳ Running — wait for the job to finish before switching actions",
+        yield Static("⏳ Running — press [bold]ctrl+x[/] to cancel",
                      id="status-running")
         with Horizontal(id="body"):
             yield Sidebar()
@@ -386,7 +386,7 @@ class ForgeApp(App):
     async def on_action_selected(self, event: ListView.Selected) -> None:
         if self._is_running:
             self.query_one(OutputPanel).write(
-                "[yellow]⚠ Job in progress — finish or wait before switching actions.[/]"
+                "[yellow]⚠ Job in progress — press [bold]ctrl+x[/] to cancel it first.[/]"
             )
             return
         item_id = event.item.id or ""
@@ -471,6 +471,11 @@ class ForgeApp(App):
         if proc and proc.poll() is None:
             proc.terminate()
             self.query_one(OutputPanel).write("[yellow]⚠ Cancelled.[/]")
+            self._set_running(False)
+        elif self._is_running:
+            # worker with no subprocess (e.g. pure-Python loop) — unlock UI
+            self.query_one(OutputPanel).write("[yellow]⚠ Cancel requested — worker will stop at next checkpoint.[/]")
+            self._set_running(False)
 
     def _done(self) -> None:
         self.call_from_thread(self._set_running, False)
@@ -483,6 +488,7 @@ class ForgeApp(App):
             self._done()
             return
         self._out(f"Downloading [cyan]{model_id}[/] …")
+        self._out("  Saved to: [dim]~/.cache/huggingface/hub/[/]")
         try:
             from huggingface_hub import snapshot_download
             local = snapshot_download(
@@ -493,7 +499,7 @@ class ForgeApp(App):
             from mlx_lm import load
             load(model_id)
             self._out(f"[green]✓ {model_id}[/]")
-            self._out(f"  path: {local}", "dim")
+            self._out(f"  Path: [dim]{local}[/]")
         except Exception as exc:
             self._out(f"[red]Error:[/] {exc}")
         self._done()
@@ -516,9 +522,11 @@ class ForgeApp(App):
                 cfg = dataclasses.replace(cfg, lora_rank=int(v["rank"]))
             from core.train import build_train_command
             self._out(f"Training [cyan]{Path(cfg.base_model).name}[/] for {cfg.iters} iters …")
+            self._out(f"  Data:    [dim]{cfg.data_dir}/[/]")
+            self._out(f"  Adapter: [dim]{cfg.adapter_path}/[/]")
             rc = self._stream(build_train_command(cfg))
             if rc == 0:
-                self._out(f"[green]✓ adapter saved to {cfg.adapter_path}[/]")
+                self._out(f"[green]✓ Adapter saved to {cfg.adapter_path}/[/]")
             else:
                 self._out(f"[red]Training failed (exit {rc})[/]")
         except Exception as exc:
@@ -539,6 +547,9 @@ class ForgeApp(App):
             cfg  = load_recipe(recipe)
             name = Path(recipe).parent.name
             self._out(f"Evaluating [cyan]{name}[/] …")
+            self._out(f"  Model:   [dim]{cfg.base_model}[/]")
+            self._out(f"  Adapter: [dim]{cfg.adapter_path}/[/]")
+            self._out(f"  Data:    [dim]{cfg.data_dir}/valid.jsonl[/]")
             mod   = importlib.import_module(f"recipes.{name}.eval")
             score = mod.evaluate(cfg.base_model, cfg.data_dir, adapter_path=cfg.adapter_path)
             color = "green" if score >= 0.85 else "yellow" if score >= 0.70 else "red"
@@ -559,14 +570,17 @@ class ForgeApp(App):
             from core.fuse import fuse_adapter
             cfg = load_recipe(recipe)
             self._out(f"Fusing adapter into [cyan]{Path(cfg.base_model).name}[/] …")
+            self._out(f"  Adapter: [dim]{cfg.adapter_path}/[/]")
+            self._out(f"  Output:  [dim]{cfg.fused_path}/[/]")
             fuse_adapter(cfg)
-            self._out(f"[green]✓ fused weights saved to {cfg.fused_path}[/]")
+            self._out(f"[green]✓ Fused weights saved to {cfg.fused_path}/[/]")
         except Exception as exc:
             self._out(f"[red]Error:[/] {exc}")
         self._done()
 
     @work(thread=True)
     def _run_loop(self, v: dict) -> None:
+        import sys
         recipe = v.get("recipe", "")
         if not recipe:
             self._out("Recipe path is required.", "red")
@@ -575,10 +589,18 @@ class ForgeApp(App):
         try:
             n      = int(v.get("n_experiments") or 10)
             target = float(v.get("target_score") or 0.90)
-            from core.loop import ratchet_loop
-            self._out(f"Starting ratchet loop: {n} experiments, target={target} …")
-            ratchet_loop(recipe, n_experiments=n, target_score=target)
-            self._out("[green]✓ Loop complete.[/]")
+            cmd = [sys.executable, "-m", "core.loop",
+                   "--recipe", recipe,
+                   "--n-experiments", str(n),
+                   "--target-score", str(target)]
+            self._out(f"Starting ratchet loop: [cyan]{n}[/] experiments, target=[cyan]{target}[/] …")
+            self._out(f"  Best config will be saved back to [dim]{recipe}[/]")
+            self._out("  Experiment log saved to [dim]loop_state.json[/]")
+            rc = self._stream(cmd)
+            if rc == 0:
+                self._out("[green]✓ Loop complete.[/]")
+            else:
+                self._out(f"[red]Loop exited (code {rc})[/]")
         except Exception as exc:
             self._out(f"[red]Error:[/] {exc}")
         self._done()
@@ -595,6 +617,8 @@ class ForgeApp(App):
             from core.export_gguf import export_gguf
             cfg = load_recipe(recipe)
             self._out(f"Exporting to GGUF ({v.get('quant', 'Q4_K_M')}) …")
+            self._out(f"  Source:  [dim]{cfg.fused_path}/[/]")
+            self._out(f"  Output:  [dim]{v['output']}[/]")
             export_gguf(
                 fused_path=cfg.fused_path,
                 output_gguf=v["output"],
@@ -620,6 +644,7 @@ class ForgeApp(App):
             from core.push_hf import push_to_hf
             cfg = load_recipe(recipe)
             self._out(f"Pushing to [cyan]huggingface.co/{repo}[/] …")
+            self._out(f"  Source: [dim]{cfg.fused_path}/[/]")
             push_to_hf(cfg.fused_path, repo, cfg.base_model, recipe, private=True)
             self._out(f"[green]✓ huggingface.co/{repo}[/]")
         except Exception as exc:
